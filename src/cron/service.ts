@@ -41,8 +41,8 @@ export function createCronService(deps: CronServiceDeps): CronService {
   let running = false;
   let executing = false;
 
-  function save(): void {
-    saveCronStore(deps.storePath, store);
+  async function save(): Promise<void> {
+    await saveCronStore(deps.storePath, store);
   }
 
   function armTimer(): void {
@@ -78,10 +78,16 @@ export function createCronService(deps: CronServiceDeps): CronService {
     executing = true;
 
     try {
-      store = loadCronStore(deps.storePath);
+      try {
+        store = await loadCronStore(deps.storePath);
+      } catch {
+        // If store is corrupted mid-run, keep using in-memory state
+        return;
+      }
       const now = Date.now();
 
       // Clear stuck jobs on each tick
+      let stuckCleared = false;
       for (const job of store.jobs) {
         if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
           console.error(`[cron] Clearing stuck job "${job.name}"`);
@@ -89,8 +95,11 @@ export function createCronService(deps: CronServiceDeps): CronService {
           job.state.lastStatus = "error";
           job.state.lastError = "Cleared: stuck for over 2 hours";
           job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
-          save();
+          stuckCleared = true;
         }
+      }
+      if (stuckCleared) {
+        await save();
       }
 
       const dueJobs = store.jobs.filter(
@@ -116,7 +125,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
   async function executeJob(job: CronJob): Promise<CronRunOutcome> {
     const now = Date.now();
     job.state.runningAtMs = now;
-    save();
+    await save();
 
     let outcome: CronRunOutcome;
     try {
@@ -150,7 +159,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
       : undefined;
     job.updatedAt = endMs;
 
-    save();
+    await save();
 
     // Deliver result if configured
     if (
@@ -172,28 +181,40 @@ export function createCronService(deps: CronServiceDeps): CronService {
   return {
     start() {
       running = true;
-      store = loadCronStore(deps.storePath);
-      const now = Date.now();
-
-      // Clear stuck jobs (e.g. from a previous crash)
-      for (const job of store.jobs) {
-        if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
-          console.error(`[cron] Clearing stuck job "${job.name}"`);
-          job.state.runningAtMs = undefined;
-          job.state.lastStatus = "error";
-          job.state.lastError = "Cleared: stuck for over 2 hours";
-          job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
+      // Fire-and-forget async load — keeps public interface sync
+      void (async () => {
+        try {
+          store = await loadCronStore(deps.storePath);
+        } catch (err) {
+          console.error("[cron] Failed to load store, starting empty:", err);
+          store = { version: 1, jobs: [] };
         }
-      }
+        const now = Date.now();
 
-      for (const job of store.jobs) {
-        if (job.enabled) {
-          job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, now);
+        // Clear stuck jobs (e.g. from a previous crash)
+        let stuckCleared = false;
+        for (const job of store.jobs) {
+          if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
+            console.error(`[cron] Clearing stuck job "${job.name}"`);
+            job.state.runningAtMs = undefined;
+            job.state.lastStatus = "error";
+            job.state.lastError = "Cleared: stuck for over 2 hours";
+            job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
+            stuckCleared = true;
+          }
         }
-      }
 
-      save();
-      armTimer();
+        for (const job of store.jobs) {
+          if (job.enabled) {
+            job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, now);
+          }
+        }
+
+        if (stuckCleared || store.jobs.length > 0) {
+          await save();
+        }
+        armTimer();
+      })();
     },
 
     stop() {
@@ -226,7 +247,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
       };
 
       store.jobs.push(job);
-      save();
+      void save().catch(() => {});
       armTimer();
       return job;
     },
@@ -235,7 +256,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
       const idx = store.jobs.findIndex((j) => j.id === id);
       if (idx === -1) return false;
       store.jobs.splice(idx, 1);
-      save();
+      void save().catch(() => {});
       return true;
     },
 

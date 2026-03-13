@@ -1,13 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCronService } from "./service.js";
-import { saveCronStore } from "./store.js";
+import { saveCronStore, clearStoreCache } from "./store.js";
 import type { CronJob, CronRunOutcome, CronDeliveryTarget, CronStore } from "./types.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "cron-test-"));
+}
+
+/** Wait for the fire-and-forget async init in start() to complete. */
+async function tick(ms = 50): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
 }
 
 describe("CronService", () => {
@@ -20,15 +25,17 @@ describe("CronService", () => {
   });
 
   afterEach(() => {
+    clearStoreCache();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("starts with empty job list", () => {
+  it("starts with empty job list", async () => {
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     expect(svc.list()).toEqual([]);
     expect(svc.status()).toEqual({
@@ -40,12 +47,13 @@ describe("CronService", () => {
     svc.stop();
   });
 
-  it("adds and lists jobs", () => {
+  it("adds and lists jobs", async () => {
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "test-job",
@@ -68,12 +76,13 @@ describe("CronService", () => {
     svc.stop();
   });
 
-  it("removes jobs", () => {
+  it("removes jobs", async () => {
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "to-remove",
@@ -102,6 +111,7 @@ describe("CronService", () => {
       runIsolatedJob,
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "manual-run",
@@ -124,26 +134,30 @@ describe("CronService", () => {
     svc.stop();
   });
 
-  it("persists jobs across service restarts", () => {
+  it("persists jobs across service restarts", async () => {
     const svc1 = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc1.start();
+    await tick();
 
     const job = svc1.add({
       name: "persistent",
       schedule: { kind: "every", everyMs: 120_000 },
       prompt: "persist me",
     });
+    await tick(); // let save() complete
 
     svc1.stop();
+    clearStoreCache();
 
     const svc2 = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc2.start();
+    await tick();
 
     const jobs = svc2.list();
     expect(jobs).toHaveLength(1);
@@ -166,6 +180,7 @@ describe("CronService", () => {
       runIsolatedJob,
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "error-job",
@@ -192,6 +207,7 @@ describe("CronService", () => {
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     const outcome = await svc.run("does-not-exist");
     expect(outcome.status).toBe("error");
@@ -214,6 +230,7 @@ describe("CronService", () => {
       runIsolatedJob,
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "one-shot",
@@ -241,6 +258,7 @@ describe("CronService", () => {
       runIsolatedJob,
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "one-shot-error",
@@ -269,6 +287,7 @@ describe("CronService", () => {
       runIsolatedJob,
     });
     svc.start();
+    await tick();
 
     const job = svc.add({
       name: "error-counter",
@@ -309,6 +328,7 @@ describe("CronService", () => {
       deliverResult,
     });
     svc.start();
+    await tick();
 
     const target: CronDeliveryTarget = { channel: "telegram", chatId: "123" };
     const job = svc.add({
@@ -344,6 +364,7 @@ describe("CronService", () => {
       deliverResult,
     });
     svc.start();
+    await tick();
 
     const target: CronDeliveryTarget = { channel: "telegram", chatId: "123" };
     const job = svc.add({
@@ -360,24 +381,26 @@ describe("CronService", () => {
     svc.stop();
   });
 
-  it("getJob returns undefined for nonexistent ID", () => {
+  it("getJob returns undefined for nonexistent ID", async () => {
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     expect(svc.getJob("nope")).toBeUndefined();
 
     svc.stop();
   });
 
-  it("status reflects stopped state after stop()", () => {
+  it("status reflects stopped state after stop()", async () => {
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
     svc.stop();
 
     expect(svc.status().running).toBe(false);
@@ -385,7 +408,7 @@ describe("CronService", () => {
 
   // ---------- stuck job recovery ----------
 
-  it("clears stuck job on start() (stuck > 2h)", () => {
+  it("clears stuck job on start() (stuck > 2h)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Pre-populate store with a job that has been "running" for 3 hours
@@ -408,13 +431,15 @@ describe("CronService", () => {
         },
       ],
     };
-    saveCronStore(storePath, store);
+    await saveCronStore(storePath, store);
+    clearStoreCache();
 
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     const job = svc.getJob("stuck-job");
     expect(job?.state.runningAtMs).toBeUndefined();
@@ -426,7 +451,7 @@ describe("CronService", () => {
     errorSpy.mockRestore();
   });
 
-  it("does NOT clear job running < 2h", () => {
+  it("does NOT clear job running < 2h", async () => {
     // Pre-populate store with a job that has been "running" for 1 hour
     const oneHourAgo = Date.now() - 1 * 60 * 60 * 1000;
     const store: CronStore = {
@@ -447,13 +472,15 @@ describe("CronService", () => {
         },
       ],
     };
-    saveCronStore(storePath, store);
+    await saveCronStore(storePath, store);
+    clearStoreCache();
 
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     const job = svc.getJob("running-job");
     expect(job?.state.runningAtMs).toBe(oneHourAgo);
@@ -461,7 +488,7 @@ describe("CronService", () => {
     svc.stop();
   });
 
-  it("does NOT affect jobs with no runningAtMs", () => {
+  it("does NOT affect jobs with no runningAtMs", async () => {
     const store: CronStore = {
       version: 1,
       jobs: [
@@ -478,13 +505,15 @@ describe("CronService", () => {
         },
       ],
     };
-    saveCronStore(storePath, store);
+    await saveCronStore(storePath, store);
+    clearStoreCache();
 
     const svc = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     svc.start();
+    await tick();
 
     const job = svc.getJob("idle-job");
     expect(job?.state.runningAtMs).toBeUndefined();

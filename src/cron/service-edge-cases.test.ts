@@ -9,6 +9,7 @@ import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCronService } from "./index.js";
+import { clearStoreCache } from "./store.js";
 import type { CronStore } from "./types.js";
 
 const testDir = join(tmpdir(), `openclaude-cron-test-${Date.now()}`);
@@ -22,13 +23,20 @@ function createEmptyStore(): CronStore {
   return { version: 1, jobs: [] };
 }
 
+/** Wait for the fire-and-forget async init in start() to complete. */
+async function tick(ms = 50): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 describe("cron service edge cases", () => {
   beforeEach(() => {
+    clearStoreCache();
     mkdirSync(testDir, { recursive: true });
     writeStore(createEmptyStore());
   });
 
   afterEach(() => {
+    clearStoreCache();
     try {
       rmSync(testDir, { recursive: true, force: true });
     } catch {
@@ -36,12 +44,13 @@ describe("cron service edge cases", () => {
     }
   });
 
-  it("add() creates a job with correct defaults", () => {
+  it("add() creates a job with correct defaults", async () => {
     const service = createCronService({
       storePath,
       runIsolatedJob: vi.fn().mockResolvedValue({ status: "ok" }),
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "test job",
@@ -58,12 +67,13 @@ describe("cron service edge cases", () => {
     service.stop();
   });
 
-  it("remove() returns false for nonexistent job", () => {
+  it("remove() returns false for nonexistent job", async () => {
     const service = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     service.start();
+    await tick();
 
     expect(service.remove("nonexistent-id")).toBe(false);
 
@@ -76,6 +86,7 @@ describe("cron service edge cases", () => {
       runIsolatedJob: vi.fn(),
     });
     service.start();
+    await tick();
 
     const result = await service.run("nonexistent");
     expect(result.status).toBe("error");
@@ -91,6 +102,7 @@ describe("cron service edge cases", () => {
       runIsolatedJob: runner,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "failing job",
@@ -123,6 +135,7 @@ describe("cron service edge cases", () => {
       runIsolatedJob: runner,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "flaky job",
@@ -148,6 +161,7 @@ describe("cron service edge cases", () => {
       runIsolatedJob: runner,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "one shot",
@@ -172,6 +186,7 @@ describe("cron service edge cases", () => {
       runIsolatedJob: runner,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "failing one shot",
@@ -196,6 +211,7 @@ describe("cron service edge cases", () => {
       deliverResult: deliverer,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "deliver test",
@@ -222,6 +238,7 @@ describe("cron service edge cases", () => {
       deliverResult: deliverer,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "error test",
@@ -246,6 +263,7 @@ describe("cron service edge cases", () => {
       deliverResult: deliverer,
     });
     service.start();
+    await tick();
 
     const job = service.add({
       name: "no target",
@@ -260,12 +278,13 @@ describe("cron service edge cases", () => {
     service.stop();
   });
 
-  it("status() reflects correct counts", () => {
+  it("status() reflects correct counts", async () => {
     const service = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     service.start();
+    await tick();
 
     expect(service.status()).toEqual({ running: true, jobCount: 0, enabledCount: 0 });
 
@@ -286,12 +305,13 @@ describe("cron service edge cases", () => {
     expect(service.status().running).toBe(false);
   });
 
-  it("list() returns copy of jobs array", () => {
+  it("list() returns copy of jobs array", async () => {
     const service = createCronService({
       storePath,
       runIsolatedJob: vi.fn(),
     });
     service.start();
+    await tick();
 
     service.add({
       name: "job",
@@ -307,7 +327,7 @@ describe("cron service edge cases", () => {
     service.stop();
   });
 
-  it("empty store loads without errors", () => {
+  it("empty store loads without errors", async () => {
     writeStore({ version: 1, jobs: [] });
     const service = createCronService({
       storePath,
@@ -315,11 +335,12 @@ describe("cron service edge cases", () => {
     });
 
     expect(() => service.start()).not.toThrow();
+    await tick();
     expect(service.list()).toEqual([]);
     service.stop();
   });
 
-  it("corrupted store file loads as empty", () => {
+  it("corrupted store file loads as empty", async () => {
     writeFileSync(storePath, "not valid json!!!", "utf-8");
 
     const service = createCronService({
@@ -327,7 +348,11 @@ describe("cron service edge cases", () => {
       runIsolatedJob: vi.fn(),
     });
 
+    // start() fires async load which will fail — service should handle gracefully
     expect(() => service.start()).not.toThrow();
+    await tick();
+    // The async load will throw on parse, but the service catches it internally
+    // Jobs list stays at the initial empty state
     expect(service.list()).toEqual([]);
     service.stop();
   });
