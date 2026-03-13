@@ -8,6 +8,7 @@
  * - cron jobs → isolated session
  */
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import type { ProcessPool } from "../engine/pool.js";
 import type { InboundMessage } from "../channels/types.js";
 import { GATEWAY_COMMANDS, createCommandHandlers } from "./commands.js";
@@ -16,6 +17,34 @@ import type { ParsedCommand, Router } from "./types.js";
 import { matchSkillCommand } from "../skills/commands.js";
 import type { SkillEntry } from "../skills/loader.js";
 import type { McpServerConfig } from "../config/types.js";
+import { paths } from "../config/paths.js";
+
+interface ChatSession {
+  sessionId: string;        // Internal ID for pool/directory (e.g. "main-abc123")
+  claudeSessionId: string;  // UUID for Claude Code --session-id/--resume
+  lastMessageAt: number;    // For idle reset
+  messageCount: number;     // 0 = first message (use --session-id), 1+ = resume
+}
+
+const IDLE_THRESHOLD = 4 * 60 * 60 * 1000; // 4 hours
+
+function shouldResetSession(session: ChatSession): boolean {
+  return Date.now() - session.lastMessageAt > IDLE_THRESHOLD;
+}
+
+function saveSessionMap(map: Map<string, ChatSession>): void {
+  const data = Object.fromEntries(map);
+  writeFileSync(paths.sessionsMap, JSON.stringify(data, null, 2), "utf-8");
+}
+
+function loadSessionMap(): Map<string, ChatSession> {
+  try {
+    const data = JSON.parse(readFileSync(paths.sessionsMap, "utf-8"));
+    return new Map(Object.entries(data));
+  } catch {
+    return new Map();
+  }
+}
 
 export interface RouterDeps extends CommandDeps {
   skills?: SkillEntry[];
@@ -31,9 +60,9 @@ export function createRouter(deps: RouterDeps): Router {
   const mcpConfig = deps.mcpConfig;
   const gatewayUrl = deps.gatewayUrl;
 
-  // Stable session ID per chat — reused across turns so Claude Code
-  // gets the same --project path and can read prior CLAUDE.md / context.
-  const mainSessions = new Map<string, string>();
+  // Persistent session map: tracks Claude Code session UUIDs per chat
+  // for --session-id / --resume continuity across messages.
+  const mainSessions = loadSessionMap();
 
   const toolsLine = gatewayUrl
     ? "\n\nYou have tools to manage this system: cron_add, cron_list, cron_remove, cron_run, cron_status, memory_search, memory_get, send_message. Use them when the user asks you to set reminders, schedule tasks, search memory, or send messages to channels."
@@ -78,16 +107,37 @@ export function createRouter(deps: RouterDeps): Router {
           : skill.body;
 
         const sessionKey = deriveSessionKey(message);
-        let sessionId = mainSessions.get(sessionKey);
-        if (!sessionId) {
-          sessionId = `main-${randomUUID().slice(0, 8)}`;
-          mainSessions.set(sessionKey, sessionId);
+        let chatSession = mainSessions.get(sessionKey);
+        if (chatSession && shouldResetSession(chatSession)) {
+          mainSessions.delete(sessionKey);
+          chatSession = undefined;
+        }
+        if (!chatSession) {
+          chatSession = {
+            sessionId: `main-${randomUUID().slice(0, 8)}`,
+            claudeSessionId: randomUUID(),
+            lastMessageAt: Date.now(),
+            messageCount: 0,
+          };
+          mainSessions.set(sessionKey, chatSession);
         }
 
-        const systemPrompt = await fetchMemoryContext(prompt);
+        const isResume = chatSession.messageCount > 0;
+        const systemPrompt = isResume ? undefined : await fetchMemoryContext(prompt);
 
         try {
-          const result = await pool.submit({ sessionId, prompt, systemPrompt, mcpConfig, gatewayUrl });
+          const result = await pool.submit({
+            sessionId: chatSession.sessionId,
+            prompt,
+            systemPrompt,
+            claudeSessionId: chatSession.claudeSessionId,
+            resumeSession: isResume,
+            mcpConfig,
+            gatewayUrl,
+          });
+          chatSession.messageCount++;
+          chatSession.lastMessageAt = Date.now();
+          saveSessionMap(mainSessions);
           return result.text;
         } catch (err) {
           return `Error: ${err instanceof Error ? err.message : String(err)}`;
