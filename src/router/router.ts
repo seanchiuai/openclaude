@@ -14,6 +14,7 @@ import type { InboundMessage } from "../channels/types.js";
 import { GATEWAY_COMMANDS, createCommandHandlers } from "./commands.js";
 import type { CommandDeps } from "./commands.js";
 import type { OnStreamEvent } from "../engine/types.js";
+import type { ClaudeResult } from "../engine/types.js";
 import type { ChatSession, ParsedCommand, Router } from "./types.js";
 import {
   buildSkillCommandSpecs,
@@ -35,6 +36,31 @@ const IDLE_THRESHOLD = 4 * 60 * 60 * 1000; // 4 hours
 
 function shouldResetSession(session: ChatSession): boolean {
   return Date.now() - session.lastMessageAt > IDLE_THRESHOLD;
+}
+
+function createChatSession(sessionId: string): ChatSession {
+  return {
+    sessionId,
+    claudeSessionId: randomUUID(),
+    lastMessageAt: Date.now(),
+    messageCount: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
+    compactionCount: 0,
+  };
+}
+
+function updateSessionUsage(session: ChatSession, result: ClaudeResult): void {
+  if (result.usage) {
+    session.totalInputTokens += result.usage.inputTokens;
+    session.totalOutputTokens += result.usage.outputTokens;
+    session.totalCostUsd += result.usage.totalCostUsd;
+  }
+  if (result.compacted) {
+    session.compactionCount++;
+    session.lastCompactedAt = Date.now();
+  }
 }
 
 function saveSessionMap(map: Map<string, ChatSession>): void {
@@ -202,12 +228,7 @@ export function createRouter(deps: RouterDeps): Router {
           chatSession = undefined;
         }
         if (!chatSession) {
-          chatSession = {
-            sessionId: `main-${randomUUID().slice(0, 8)}`,
-            claudeSessionId: randomUUID(),
-            lastMessageAt: Date.now(),
-            messageCount: 0,
-          };
+          chatSession = createChatSession(`main-${randomUUID().slice(0, 8)}`);
           mainSessions.set(sessionKey, chatSession);
         }
 
@@ -232,6 +253,7 @@ export function createRouter(deps: RouterDeps): Router {
           }, onProgress);
           chatSession.messageCount++;
           chatSession.lastMessageAt = Date.now();
+          updateSessionUsage(chatSession, result);
           // Update stored session ID if CLI returned a different one (OpenClaw parity)
           if (result.claudeSessionId && result.claudeSessionId !== chatSession.claudeSessionId) {
             chatSession.claudeSessionId = result.claudeSessionId;
@@ -275,12 +297,7 @@ export function createRouter(deps: RouterDeps): Router {
       chatSession = undefined;
     }
     if (!chatSession) {
-      chatSession = {
-        sessionId: `main-${randomUUID().slice(0, 8)}`,
-        claudeSessionId: randomUUID(),
-        lastMessageAt: Date.now(),
-        messageCount: 0,
-      };
+      chatSession = createChatSession(`main-${randomUUID().slice(0, 8)}`);
       mainSessions.set(sessionKey, chatSession);
     }
 
@@ -300,6 +317,7 @@ export function createRouter(deps: RouterDeps): Router {
       }, onProgress);
       chatSession.messageCount++;
       chatSession.lastMessageAt = Date.now();
+      updateSessionUsage(chatSession, result);
       // Update stored session ID if CLI returned a different one (OpenClaw parity)
       if (result.claudeSessionId && result.claudeSessionId !== chatSession.claudeSessionId) {
         chatSession.claudeSessionId = result.claudeSessionId;

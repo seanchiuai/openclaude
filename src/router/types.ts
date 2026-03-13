@@ -27,4 +27,10 @@ export interface ChatSession {
   claudeSessionId: string;  // UUID for Claude Code --session-id/--resume
   lastMessageAt: number;    // For idle reset
   messageCount: number;     // 0 = first message (use --session-id), 1+ = resume
+  totalInputTokens: number;   // Accumulated input tokens across all turns
+  totalOutputTokens: number;  // Accumulated output tokens across all turns
+  totalCostUsd: number;       // Accumulated cost across all turns
+  compactionCount: number;    // How many times auto-compaction fired
+  lastCompactedAt?: number;   // Timestamp of last compaction
+  lastFlushCompactionCount?: number; // compactionCount at last memory flush
 }

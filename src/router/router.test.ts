@@ -303,6 +303,52 @@ describe("createRouter", () => {
     expect(submitArg.systemPrompt).not.toContain("Memory Context (auto-loaded)");
   });
 
+  it("accumulates token usage across turns in session", async () => {
+    pool.submit
+      .mockResolvedValueOnce({
+        text: "first",
+        usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, totalCostUsd: 0.01 },
+      })
+      .mockResolvedValueOnce({
+        text: "second",
+        usage: { inputTokens: 1500, outputTokens: 300, cacheReadTokens: 0, cacheCreationTokens: 0, totalCostUsd: 0.02 },
+      });
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
+
+    await router(makeMessage({ chatId: "70", text: "first" }));
+    await router(makeMessage({ chatId: "70", text: "second" }));
+
+    // Verify sessions-map was saved with accumulated usage
+    const { writeFileSync: mockWrite } = await import("node:fs");
+    const calls = vi.mocked(mockWrite).mock.calls;
+    // Find last sessions-map write
+    const lastWrite = calls.filter(c => String(c[0]).includes("sessions-map")).pop();
+    expect(lastWrite).toBeDefined();
+    const savedData = JSON.parse(lastWrite![1] as string);
+    const session = Object.values(savedData)[0] as Record<string, unknown>;
+    expect(session.totalInputTokens).toBe(2500);
+    expect(session.totalOutputTokens).toBe(500);
+    expect(session.totalCostUsd).toBe(0.03);
+  });
+
+  it("tracks compaction count when compacted flag is set", async () => {
+    pool.submit
+      .mockResolvedValueOnce({ text: "first" })
+      .mockResolvedValueOnce({ text: "second", compacted: true, preCompactTokens: 180000 });
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
+
+    await router(makeMessage({ chatId: "71", text: "first" }));
+    await router(makeMessage({ chatId: "71", text: "second" }));
+
+    const { writeFileSync: mockWrite } = await import("node:fs");
+    const calls = vi.mocked(mockWrite).mock.calls;
+    const lastWrite = calls.filter(c => String(c[0]).includes("sessions-map")).pop();
+    const savedData = JSON.parse(lastWrite![1] as string);
+    const session = Object.values(savedData)[0] as Record<string, unknown>;
+    expect(session.compactionCount).toBe(1);
+    expect(session.lastCompactedAt).toBeDefined();
+  });
+
   it("engine error returns error message to channel", async () => {
     pool.submit.mockRejectedValueOnce(new Error("subprocess crashed"));
     const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
