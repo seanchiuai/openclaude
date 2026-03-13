@@ -54,7 +54,7 @@ export function spawnClaude(task: AgentTask): {
     ? {
         "openclaude-gateway": {
           command: "node",
-          args: [join(__dirname, "mcp/gateway-tools-server.js")],
+          args: [join(__dirname, "../mcp/gateway-tools-server.js")],
           env: { GATEWAY_URL: task.gatewayUrl },
         },
       }
@@ -164,6 +164,7 @@ function parseClaudeOutput(
   // Claude --output-format json wraps output in a JSON object
   let text = stdout;
   let raw: unknown = undefined;
+  let claudeSessionId: string | undefined;
 
   try {
     const parsed = JSON.parse(stdout);
