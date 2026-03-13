@@ -165,7 +165,7 @@ describe("createRouter", () => {
     expect(submitArg.prompt).toBe("run backup");
   });
 
-  it("skill trigger routes to engine with skill body as prompt", async () => {
+  it("skill trigger routes to engine with skill reference as prompt", async () => {
     const skills = [
       {
         name: "daily-standup",
@@ -173,6 +173,7 @@ describe("createRouter", () => {
         triggers: ["/standup"],
         body: "Review my recent git commits.",
         path: "/skills/standup/SKILL.md",
+        invocation: { userInvocable: true, disableModelInvocation: false },
       },
     ];
     const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"], skills });
@@ -180,11 +181,12 @@ describe("createRouter", () => {
 
     expect(pool.submit).toHaveBeenCalledOnce();
     const submitArg = pool.submit.mock.calls[0][0];
-    expect(submitArg.prompt).toBe("Review my recent git commits.");
+    // Prompt now references the skill name (body injected via system prompt)
+    expect(submitArg.prompt).toContain("daily-standup");
     expect(result).toBe("engine response");
   });
 
-  it("skill trigger with args appends user request", async () => {
+  it("skill trigger with args includes user input in prompt", async () => {
     const skills = [
       {
         name: "daily-standup",
@@ -192,13 +194,14 @@ describe("createRouter", () => {
         triggers: ["/standup"],
         body: "Review my recent git commits.",
         path: "/skills/standup/SKILL.md",
+        invocation: { userInvocable: true, disableModelInvocation: false },
       },
     ];
     const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"], skills });
     await router(makeMessage({ text: "/standup for last week" }));
 
     const submitArg = pool.submit.mock.calls[0][0];
-    expect(submitArg.prompt).toContain("Review my recent git commits.");
+    expect(submitArg.prompt).toContain("daily-standup");
     expect(submitArg.prompt).toContain("for last week");
   });
 
@@ -234,13 +237,13 @@ describe("createRouter", () => {
     expect(pool.submit).toHaveBeenCalledOnce();
     const submitArg = pool.submit.mock.calls[0][0];
     expect(submitArg.systemPrompt).toBeDefined();
-    expect(submitArg.systemPrompt).toContain("persistent memory system");
+    expect(submitArg.systemPrompt).toContain("Memory Context (auto-loaded)");
     expect(submitArg.systemPrompt).toContain("Sean is a software engineer");
     expect(submitArg.systemPrompt).toContain("sean.md#L1-L3");
     expect(submitArg.systemPrompt).toContain("0.95");
   });
 
-  it("does not inject systemPrompt when memoryManager returns no results", async () => {
+  it("first message always gets systemPrompt even without memory results", async () => {
     const mockMemoryManager = {
       search: vi.fn().mockResolvedValue([]),
       status: vi.fn(),
@@ -258,19 +261,25 @@ describe("createRouter", () => {
 
     expect(pool.submit).toHaveBeenCalledOnce();
     const submitArg = pool.submit.mock.calls[0][0];
-    expect(submitArg.systemPrompt).toBeUndefined();
+    // System prompt is always generated on first message (OpenClaw parity)
+    expect(submitArg.systemPrompt).toBeDefined();
+    expect(submitArg.systemPrompt).toContain("OpenClaude");
+    // No memory context section when no results
+    expect(submitArg.systemPrompt).not.toContain("Memory Context (auto-loaded)");
   });
 
-  it("does not inject systemPrompt when memoryManager is not provided", async () => {
+  it("first message always gets systemPrompt even without memoryManager", async () => {
     const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
     await router(makeMessage({ text: "hello there" }));
 
     expect(pool.submit).toHaveBeenCalledOnce();
     const submitArg = pool.submit.mock.calls[0][0];
-    expect(submitArg.systemPrompt).toBeUndefined();
+    // System prompt always present on first message
+    expect(submitArg.systemPrompt).toBeDefined();
+    expect(submitArg.systemPrompt).toContain("OpenClaude");
   });
 
-  it("continues without systemPrompt when memory search throws", async () => {
+  it("continues with systemPrompt (no memory section) when memory search throws", async () => {
     const mockMemoryManager = {
       search: vi.fn().mockRejectedValue(new Error("DB connection failed")),
       status: vi.fn(),
@@ -288,7 +297,10 @@ describe("createRouter", () => {
 
     expect(pool.submit).toHaveBeenCalledOnce();
     const submitArg = pool.submit.mock.calls[0][0];
-    expect(submitArg.systemPrompt).toBeUndefined();
+    // System prompt still generated, just without memory context
+    expect(submitArg.systemPrompt).toBeDefined();
+    expect(submitArg.systemPrompt).toContain("OpenClaude");
+    expect(submitArg.systemPrompt).not.toContain("Memory Context (auto-loaded)");
   });
 
   it("engine error returns error message to channel", async () => {

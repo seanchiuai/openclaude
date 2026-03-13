@@ -14,10 +14,15 @@ import type { InboundMessage } from "../channels/types.js";
 import { GATEWAY_COMMANDS, createCommandHandlers } from "./commands.js";
 import type { CommandDeps } from "./commands.js";
 import type { ChatSession, ParsedCommand, Router } from "./types.js";
-import { matchSkillCommand } from "../skills/commands.js";
+import {
+  buildSkillCommandSpecs,
+  resolveSkillCommandInvocation,
+} from "../skills/commands.js";
+import type { SkillCommandSpec } from "../skills/commands.js";
 import type { SkillEntry } from "../skills/loader.js";
 import type { McpServerConfig } from "../config/types.js";
 import { paths } from "../config/paths.js";
+import { buildSystemPrompt } from "../engine/system-prompt.js";
 
 const IDLE_THRESHOLD = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -50,37 +55,61 @@ export function createRouter(deps: RouterDeps): Router {
   // for --session-id / --resume continuity across messages.
   const mainSessions = loadSessionMap();
 
-  const handlers = createCommandHandlers({ ...deps, mainSessions, saveSessionMap });
+  const handlers = createCommandHandlers(deps);
   const pool = deps.pool;
   const skills = deps.skills ?? [];
   const memoryManager = deps.memoryManager;
   const mcpConfig = deps.mcpConfig;
   const gatewayUrl = deps.gatewayUrl;
 
-  const toolsLine = gatewayUrl
-    ? "\n\nYou have tools to manage this system: cron_add, cron_list, cron_remove, cron_run, cron_status, memory_search, memory_get, send_message. Use them when the user asks you to set reminders, schedule tasks, search memory, or send messages to channels."
-    : "";
+  // Build command specs from loaded skills (matches OpenClaw's buildWorkspaceSkillCommandSpecs)
+  const skillCommands: SkillCommandSpec[] = buildSkillCommandSpecs(
+    skills,
+    GATEWAY_COMMANDS,
+  );
 
-  async function fetchMemoryContext(query: string): Promise<string | undefined> {
-    if (!memoryManager) return undefined;
-    try {
-      const memories = await memoryManager.search(query, { maxResults: 3 });
-      if (memories.length > 0) {
-        const memoryContext = memories
-          .map(m => `[${m.citation}] (score: ${m.score.toFixed(2)})\n${m.snippet}`)
-          .join("\n\n");
-        return `You have access to a persistent memory system. Here are relevant memories for this conversation:\n\n${memoryContext}\n\nUse this context to inform your response. If the user asks what you know or remember, reference these memories.${toolsLine}`;
+  async function buildFirstMessageSystemPrompt(
+    query: string,
+    message: InboundMessage,
+  ): Promise<string | undefined> {
+    // Fetch memory context for injection into system prompt
+    let memoryContext: string | undefined;
+    if (memoryManager) {
+      try {
+        const memories = await memoryManager.search(query, { maxResults: 3 });
+        if (memories.length > 0) {
+          memoryContext = memories
+            .map(m => `[${m.citation}] (score: ${m.score.toFixed(2)})\n${m.snippet}`)
+            .join("\n\n");
+        }
+      } catch {
+        // Memory search failed, continue without context
       }
-    } catch {
-      // Memory search failed, continue without context
     }
-    return toolsLine || undefined;
+
+    return buildSystemPrompt({
+      skills,
+      memoryContext,
+      hasGatewayTools: !!gatewayUrl,
+      channel: message.channel,
+      workspaceDir: process.cwd(),
+    });
   }
 
   return async (message: InboundMessage): Promise<string> => {
-    // 1. Parse commands
+    // 0. /reset needs message context to scope to calling chat
     if (message.text.startsWith("/")) {
       const command = parseCommand(message.text);
+      if (command.name === "reset") {
+        const sessionKey = deriveSessionKey(message);
+        const deleted = mainSessions.delete(sessionKey);
+        saveSessionMap(mainSessions);
+        return deleted
+          ? "Session reset. Next message will start a fresh Claude Code session."
+          : "No active session for this chat.";
+      }
+
+      // 1. Parse commands
       if (GATEWAY_COMMANDS.has(command.name)) {
         const handler = handlers[command.name];
         if (handler) {
@@ -89,15 +118,24 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
-    // 2. Check if it matches a loaded skill trigger
-    if (message.text.startsWith("/") && skills.length > 0) {
-      const skill = matchSkillCommand(message.text, skills);
-      if (skill) {
-        // Inject the skill body into the prompt sent to Claude Code
-        const args = message.text.trim().split(/\s+/).slice(1).join(" ");
-        const prompt = args
-          ? `${skill.body}\n\nUser request: ${args}`
-          : skill.body;
+    // 2. Check if it matches a loaded skill trigger (OpenClaw-style resolution)
+    if (message.text.startsWith("/") && skillCommands.length > 0) {
+      const invocation = resolveSkillCommandInvocation({
+        commandBodyNormalized: message.text,
+        skillCommands,
+      });
+      if (invocation) {
+        // Find the full skill entry for system prompt injection
+        const skill = skills.find(
+          (s) => s.name === invocation.command.skillName,
+        );
+
+        // OpenClaw-style prompt: rewrite body to reference skill + user input
+        const promptParts = [
+          `Use the "${invocation.command.skillName}" skill for this request.`,
+          invocation.args ? `User input:\n${invocation.args}` : null,
+        ].filter((entry): entry is string => Boolean(entry));
+        const prompt = promptParts.join("\n\n");
 
         const sessionKey = deriveSessionKey(message);
         let chatSession = mainSessions.get(sessionKey);
@@ -116,7 +154,12 @@ export function createRouter(deps: RouterDeps): Router {
         }
 
         const isResume = chatSession.messageCount > 0;
-        const systemPrompt = isResume ? undefined : await fetchMemoryContext(prompt);
+        // Skill body is injected via the system prompt (skills section),
+        // matching how OpenClaw's agent framework makes skill definitions available.
+        const systemPrompt = isResume ? undefined : await buildFirstMessageSystemPrompt(
+          invocation.args ?? invocation.command.skillName,
+          message,
+        );
 
         try {
           const result = await pool.submit({
@@ -173,7 +216,7 @@ export function createRouter(deps: RouterDeps): Router {
     }
 
     const isResume = chatSession.messageCount > 0;
-    const systemPrompt = isResume ? undefined : await fetchMemoryContext(message.text);
+    const systemPrompt = isResume ? undefined : await buildFirstMessageSystemPrompt(message.text, message);
 
     try {
       const result = await pool.submit({

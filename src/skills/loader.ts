@@ -1,12 +1,18 @@
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+export interface SkillInvocationPolicy {
+  userInvocable: boolean;
+  disableModelInvocation: boolean;
+}
+
 export interface SkillEntry {
   name: string;
   description: string;
   triggers?: string[];
   body: string;
   path: string;
+  invocation: SkillInvocationPolicy;
 }
 
 function findSkillFiles(dir: string): string[] {
@@ -80,6 +86,28 @@ function parseFrontmatter(content: string): {
   }
 }
 
+function parseFrontmatterBool(value: unknown, defaultValue: boolean): boolean {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  if (typeof value === "boolean") return value;
+  const str = String(value).trim().toLowerCase();
+  if (str === "true" || str === "yes" || str === "1") return true;
+  if (str === "false" || str === "no" || str === "0") return false;
+  return defaultValue;
+}
+
+function resolveInvocationPolicy(meta: Record<string, unknown>): SkillInvocationPolicy {
+  return {
+    userInvocable: parseFrontmatterBool(
+      meta["user-invocable"] ?? meta["user_invocable"],
+      true,
+    ),
+    disableModelInvocation: parseFrontmatterBool(
+      meta["disable-model-invocation"] ?? meta["disable_model_invocation"],
+      false,
+    ),
+  };
+}
+
 export async function loadSkills(skillsDir: string): Promise<SkillEntry[]> {
   const files = findSkillFiles(skillsDir);
   const skills: SkillEntry[] = [];
@@ -97,6 +125,7 @@ export async function loadSkills(skillsDir: string): Promise<SkillEntry[]> {
       triggers: meta.triggers as string[] | undefined,
       body,
       path: filePath,
+      invocation: resolveInvocationPolicy(meta),
     });
   }
 

@@ -12,14 +12,20 @@ import { tmpdir } from "node:os";
 // We test parseClaudeOutput indirectly through spawn, but let's also
 // test the internal JSON parsing logic by extracting test cases.
 
-// Mock paths to use temp directory
-const testDir = join(tmpdir(), `openclaude-spawn-test-${Date.now()}`);
-vi.mock("../config/paths.js", () => ({
-  paths: {
-    sessions: join(testDir, "sessions"),
-    base: testDir,
-  },
-}));
+// Mock paths to use temp directory — vi.mock is hoisted, so use inline imports
+vi.mock("../config/paths.js", async () => {
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = join(tmpdir(), "openclaude-spawn-test");
+  return {
+    paths: {
+      sessions: join(dir, "sessions"),
+      base: dir,
+    },
+  };
+});
+
+const testDir = join(tmpdir(), "openclaude-spawn-test");
 
 import { spawnClaude } from "./spawn.js";
 
