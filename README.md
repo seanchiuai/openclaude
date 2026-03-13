@@ -66,23 +66,24 @@ pnpm install
 pnpm build
 
 # Create config
-mkdir -p ~/.openclaude
+mkdir -p ~/.openclaude/{memory,skills,sessions,cron,logs}
+
 cat > ~/.openclaude/config.json << 'EOF'
 {
   "channels": {
     "telegram": {
       "enabled": true,
-      "botToken": "$TELEGRAM_BOT_TOKEN",
-      "allowFrom": ["YOUR_USER_ID"]
+      "botToken": "YOUR_BOT_TOKEN"
     }
   }
 }
 EOF
 
-# Set your bot token and start
-export TELEGRAM_BOT_TOKEN="your-token-here"
+# Start the gateway
 openclaude start
 ```
+
+To get a Telegram bot token, talk to [@BotFather](https://t.me/BotFather). To restrict access, add `"allowFrom": ["YOUR_TELEGRAM_USER_ID"]` — get your ID from [@userinfobot](https://t.me/userinfobot).
 
 ## Configuration
 
@@ -90,34 +91,33 @@ Config lives at `~/.openclaude/config.json`. Environment variables are expanded 
 
 ```jsonc
 {
-  // Messaging channels
+  // Messaging channels — only include channels you're using
   "channels": {
     "telegram": {
       "enabled": true,
-      "botToken": "$TELEGRAM_BOT_TOKEN",
-      "allowFrom": ["123456789"],       // Telegram user IDs (optional)
-      "mode": "polling"                  // "polling" or "webhook"
+      "botToken": "your-bot-token",    // or "$TELEGRAM_BOT_TOKEN"
+      "allowFrom": ["123456789"],      // Telegram user IDs (omit to allow all)
+      "mode": "polling"                // "polling" or "webhook"
     },
     "slack": {
       "enabled": true,
       "botToken": "$SLACK_BOT_TOKEN",
       "appToken": "$SLACK_APP_TOKEN",
-      "mode": "socket",                 // "socket" or "http"
-      "allowFrom": ["U1234567"]         // Slack user IDs (optional)
+      "mode": "socket",               // "socket" or "http"
+      "allowFrom": ["U1234567"]       // Slack user IDs (omit to allow all)
     }
   },
 
   // Agent engine
   "agent": {
-    "maxConcurrent": 4,                 // Max parallel Claude processes
-    "defaultTimeout": 300000,           // 5 min timeout per task
-    "model": "claude-sonnet-4-6"        // Optional model override
+    "maxConcurrent": 4,               // Max parallel Claude processes
+    "defaultTimeout": 300000           // 5 min timeout per task
   },
 
   // Heartbeat
   "heartbeat": {
     "enabled": true,
-    "every": 1800000,                   // 30 minutes
+    "every": 1800000,                 // 30 minutes
     "target": {
       "channel": "telegram",
       "chatId": "123456789"
@@ -144,6 +144,8 @@ Config lives at `~/.openclaude/config.json`. Environment variables are expanded 
   }
 }
 ```
+
+**Important:** Only include channel blocks you're actually using. Omit the entire `slack` block if you only use Telegram (and vice versa). Env vars like `$SLACK_BOT_TOKEN` will fail if not set, even when the channel is disabled.
 
 ## CLI
 
@@ -207,44 +209,25 @@ Create `~/.openclaude/HEARTBEAT.md` with a checklist:
 
 The agent reviews this periodically and messages you if there's anything worth reporting.
 
-## Directory Structure
-
-```
-~/.openclaude/
-  config.json              # Main configuration
-  HEARTBEAT.md             # Heartbeat checklist
-  memory/
-    openclaude.sqlite      # Memory index (SQLite + FTS5 + sqlite-vec)
-    *.md                   # Memory files (human-readable)
-  skills/
-    *.md                   # Skill definitions
-  sessions/
-    <id>/                  # Isolated session workspaces
-  cron/
-    jobs.json              # Persisted cron jobs
-  logs/
-    gateway.log            # Gateway logs
-```
-
 ## Architecture
 
 ```
 Telegram/Slack message
-        │
-        ▼
+        |
+        v
    Gateway daemon (Node.js + Hono)
-        │
-        ▼
-   Fixed router ──── /commands → direct response
-        │
-        ▼
+        |
+        v
+   Fixed router ---- /commands -> direct response
+        |
+        v
    Process pool (max 4)
-        │
-        ▼
-   claude -p --input-file prompt.md --project ~/.openclaude/sessions/<id>/
-        │
-        ▼
-   Response → channel → user
+        |
+        v
+   echo "prompt" | claude -p --output-format json
+        |
+        v
+   Parse result event -> channel -> user
 ```
 
 Key design decisions:
@@ -252,7 +235,29 @@ Key design decisions:
 - **Fixed routing** — static dispatch, no LLM deciding how to route
 - **Session isolation** — each task gets its own `--project` path
 - **Process pool** — bounded concurrency with FIFO queue
-- **Prompt via file** — never passes user content as CLI arguments
+- **Prompt via stdin** — never passes user content as CLI arguments
+
+## Directory Structure
+
+```
+~/.openclaude/
+  config.json              # Main configuration
+  HEARTBEAT.md             # Heartbeat checklist
+  gateway.pid              # Running process PID
+  memory/
+    openclaude.sqlite      # Memory index (SQLite + FTS5 + sqlite-vec)
+    *.md                   # Memory files (human-readable)
+  skills/
+    *.md                   # Skill definitions
+  sessions/
+    <id>/                  # Isolated session workspaces
+      prompt.md            # Prompt sent to Claude
+  cron/
+    jobs.json              # Persisted cron jobs
+  logs/
+    gateway.log            # stdout
+    gateway.err.log        # stderr
+```
 
 ## Development
 
