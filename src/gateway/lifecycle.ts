@@ -11,6 +11,8 @@ import { createAuthMiddleware } from "./auth.js";
 import { createRouter } from "../router/index.js";
 import { loadSkills } from "../skills/index.js";
 import { sweepStaleSessions } from "../engine/session-cleanup.js";
+import { cleanStaleGatewayProcessesSync } from "../engine/orphan-reaper.js";
+import { killProcessGroup } from "../engine/spawn.js";
 import { createMemoryManager } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
@@ -59,6 +61,13 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   };
 
   const gatewayPort = config.gateway.port;
+
+  // Reap stale gateway processes from previous crash
+  const reaped = cleanStaleGatewayProcessesSync(gatewayPort);
+  if (reaped.length > 0) {
+    console.error(`[gateway] Reaped ${reaped.length} stale process(es) from previous run`);
+  }
+
   const gatewayUrl = `http://localhost:${gatewayPort}`;
 
   // Resolve gateway token for auth
@@ -248,6 +257,19 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
+
+  // Last-resort crash handlers — best-effort cleanup on unhandled errors
+  const onCrash = (err: unknown) => {
+    console.error("[gateway] CRASH:", err instanceof Error ? err.message : String(err));
+    // Best-effort: kill all known child processes
+    for (const session of pool.listSessions()) {
+      killProcessGroup(session.pid);
+    }
+    removePidFile();
+    process.exit(1);
+  };
+  process.on("uncaughtException", onCrash);
+  process.on("unhandledRejection", onCrash);
 
   return { config, pool, channels, memoryManager, cronService, shutdown };
 }

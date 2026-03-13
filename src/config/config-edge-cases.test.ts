@@ -4,72 +4,76 @@
  * Covers: missing env vars, nested substitution, invalid JSON,
  * edge cases in schema validation, empty config.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { describe, it, expect } from "vitest";
 
 // Test env var substitution directly
-import { substituteEnvVars, substituteEnvVarsDeep } from "./env-substitution.js";
+import {
+  resolveConfigEnvVars,
+  MissingEnvVarError,
+  substituteEnvVars,
+  substituteEnvVarsDeep,
+} from "./env-substitution.js";
 import { OpenClaudeConfigSchema } from "./schema.js";
 
 describe("substituteEnvVars edge cases", () => {
-  const originalEnv = process.env;
-
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
-  it("substitutes $VAR syntax", () => {
-    process.env.TEST_TOKEN = "abc123";
-    expect(substituteEnvVars("$TEST_TOKEN")).toBe("abc123");
-  });
-
   it("substitutes ${VAR} syntax", () => {
-    process.env.TEST_TOKEN = "abc123";
-    expect(substituteEnvVars("${TEST_TOKEN}")).toBe("abc123");
+    const result = resolveConfigEnvVars("${TEST_TOKEN}", { TEST_TOKEN: "abc123" });
+    expect(result).toBe("abc123");
   });
 
-  it("throws for undefined env var", () => {
-    delete process.env.NONEXISTENT_VAR;
-    expect(() => substituteEnvVars("$NONEXISTENT_VAR")).toThrow();
+  it("throws MissingEnvVarError for undefined env var", () => {
+    expect(() => resolveConfigEnvVars("${NONEXISTENT_VAR}", {})).toThrow(MissingEnvVarError);
   });
 
-  it("substitutes empty string env var", () => {
-    process.env.EMPTY_VAR = "";
-    expect(substituteEnvVars("$EMPTY_VAR")).toBe("");
+  it("throws MissingEnvVarError for empty string env var", () => {
+    expect(() => resolveConfigEnvVars("${EMPTY_VAR}", { EMPTY_VAR: "" })).toThrow(
+      MissingEnvVarError,
+    );
   });
 
   it("handles string without $ as-is", () => {
-    expect(substituteEnvVars("plain text")).toBe("plain text");
+    const result = resolveConfigEnvVars("plain text", {});
+    expect(result).toBe("plain text");
   });
 
   it("handles multiple substitutions in one string", () => {
-    process.env.HOST = "localhost";
-    process.env.PORT = "8080";
-    expect(substituteEnvVars("$HOST:$PORT")).toBe("localhost:8080");
+    const result = resolveConfigEnvVars("${HOST}:${PORT}", {
+      HOST: "localhost",
+      PORT: "8080",
+    });
+    expect(result).toBe("localhost:8080");
   });
 
-  it("substituteEnvVarsDeep handles nested objects", () => {
-    process.env.NESTED_VAL = "deep";
-    const result = substituteEnvVarsDeep({ outer: { inner: "$NESTED_VAL" } });
+  it("resolveConfigEnvVars handles nested objects", () => {
+    const result = resolveConfigEnvVars(
+      { outer: { inner: "${NESTED_VAL}" } },
+      { NESTED_VAL: "deep" },
+    );
     expect(result).toEqual({ outer: { inner: "deep" } });
   });
 
-  it("substituteEnvVarsDeep skips non-string values", () => {
+  it("resolveConfigEnvVars skips non-string values", () => {
     const input = { count: 42, enabled: true, items: [1, 2, 3] };
-    const result = substituteEnvVarsDeep(input);
+    const result = resolveConfigEnvVars(input, {});
     expect(result).toEqual(input);
   });
 
-  it("substituteEnvVarsDeep handles arrays with strings", () => {
-    process.env.ITEM = "value";
-    const result = substituteEnvVarsDeep(["$ITEM", "plain", 42]);
+  it("resolveConfigEnvVars handles arrays with strings", () => {
+    const result = resolveConfigEnvVars(["${ITEM}", "plain", 42], { ITEM: "value" });
     expect(result).toEqual(["value", "plain", 42]);
+  });
+
+  it("backward-compatible substituteEnvVars still works", () => {
+    process.env.TEST_TOKEN_COMPAT = "compat123";
+    expect(substituteEnvVars("${TEST_TOKEN_COMPAT}")).toBe("compat123");
+    delete process.env.TEST_TOKEN_COMPAT;
+  });
+
+  it("backward-compatible substituteEnvVarsDeep still works", () => {
+    process.env.DEEP_COMPAT = "deep-val";
+    const result = substituteEnvVarsDeep({ key: "${DEEP_COMPAT}" });
+    expect(result).toEqual({ key: "deep-val" });
+    delete process.env.DEEP_COMPAT;
   });
 });
 

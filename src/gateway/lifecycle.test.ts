@@ -151,6 +151,16 @@ vi.mock("../engine/session-cleanup.js", () => ({
   sweepStaleSessions: () => ({ removed: [], errors: [] }),
 }));
 
+const mockCleanStaleGatewayProcessesSync = vi.fn().mockReturnValue([]);
+vi.mock("../engine/orphan-reaper.js", () => ({
+  cleanStaleGatewayProcessesSync: (...args: unknown[]) => mockCleanStaleGatewayProcessesSync(...args),
+}));
+
+const mockKillProcessGroup = vi.fn();
+vi.mock("../engine/spawn.js", () => ({
+  killProcessGroup: (...args: unknown[]) => mockKillProcessGroup(...args),
+}));
+
 // Minimal config with no channels enabled
 function minimalConfig() {
   return {
@@ -200,6 +210,8 @@ beforeEach(() => {
   mockHeartbeatRunner.start.mockReturnValue(undefined);
   mockHeartbeatRunner.stop.mockReturnValue(undefined);
   mockLoadSkills.mockResolvedValue([]);
+  mockCleanStaleGatewayProcessesSync.mockReturnValue([]);
+  mockKillProcessGroup.mockReturnValue(undefined);
 });
 
 describe("startGateway", () => {
@@ -284,6 +296,13 @@ describe("startGateway", () => {
     await gw.shutdown();
 
     expect(callOrder).toEqual(["memory.close", "channel.stop", "pool.drain", "server.close"]);
+  });
+
+  it("calls orphan reaper on startup", async () => {
+    mockLoadConfig.mockReturnValue(minimalConfig());
+    const { startGateway } = await import("./lifecycle.js");
+    await startGateway();
+    expect(mockCleanStaleGatewayProcessesSync).toHaveBeenCalledWith(45557);
   });
 
   it("memory sync failure during boot doesn't crash gateway", async () => {

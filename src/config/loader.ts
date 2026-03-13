@@ -7,7 +7,8 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "./paths.js";
-import { substituteEnvVarsDeep } from "./env-substitution.js";
+import { resolveConfigEnvVars } from "./env-substitution.js";
+import type { EnvSubstitutionWarning } from "./env-substitution.js";
 import { OpenClaudeConfigSchema } from "./schema.js";
 import type { OpenClaudeConfig } from "./types.js";
 
@@ -44,10 +45,48 @@ export function loadConfig(configPath?: string): OpenClaudeConfig {
 
   const raw = readFileSync(filePath, "utf-8");
   const parsed: unknown = JSON.parse(raw);
-  const substituted = substituteEnvVarsDeep(parsed);
+
+  const envWarnings: EnvSubstitutionWarning[] = [];
+  const substituted = resolveConfigEnvVars(parsed, process.env, {
+    onMissing: (w) => envWarnings.push(w),
+  });
+
   const validated = OpenClaudeConfigSchema.parse(substituted);
 
+  validateEnabledChannelEnvVars(validated, envWarnings);
+
+  // Log warnings for disabled channels (non-fatal)
+  for (const w of envWarnings) {
+    console.error(
+      `Warning: env var \${${w.varName}} is not set (at ${w.configPath}). Ignored because channel is disabled.`,
+    );
+  }
+
   return validated;
+}
+
+function validateEnabledChannelEnvVars(
+  config: OpenClaudeConfig,
+  warnings: EnvSubstitutionWarning[],
+): void {
+  const enabledChannelPrefixes: string[] = [];
+  if (config.channels.telegram?.enabled) {
+    enabledChannelPrefixes.push("channels.telegram.");
+  }
+  if (config.channels.slack?.enabled) {
+    enabledChannelPrefixes.push("channels.slack.");
+  }
+  for (const w of warnings) {
+    const isEnabledChannel = enabledChannelPrefixes.some((prefix) =>
+      w.configPath.startsWith(prefix),
+    );
+    if (isEnabledChannel) {
+      throw new Error(
+        `Channel config error: env var \${${w.varName}} is not set (at ${w.configPath}). ` +
+          `Either set the env var or disable the channel.`,
+      );
+    }
+  }
 }
 
 export function ensureDirectories(): void {

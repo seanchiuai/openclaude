@@ -194,11 +194,11 @@ describe("env var substitution integration", () => {
     delete process.env.OC_TEST_APP;
   });
 
-  it("$VAR syntax substituted before validation", () => {
+  it("${VAR} syntax substituted before validation", () => {
     process.env.OC_TEST_TOKEN = "real-token-123";
     const raw = {
       channels: {
-        telegram: { enabled: true, botToken: "$OC_TEST_TOKEN" },
+        telegram: { enabled: true, botToken: "${OC_TEST_TOKEN}" },
       },
     };
     const substituted = substituteEnvVarsDeep(raw);
@@ -206,7 +206,7 @@ describe("env var substitution integration", () => {
     expect(result.channels.telegram?.botToken).toBe("real-token-123");
   });
 
-  it("${VAR} syntax substituted before validation", () => {
+  it("${VAR} braced syntax substituted before validation", () => {
     process.env.OC_TEST_TOKEN = "braced-token";
     const raw = {
       channels: {
@@ -225,7 +225,7 @@ describe("env var substitution integration", () => {
       channels: {
         slack: {
           enabled: true,
-          botToken: "$OC_TEST_TOKEN",
+          botToken: "${OC_TEST_TOKEN}",
           appToken: "${OC_TEST_APP}",
         },
       },
@@ -239,7 +239,7 @@ describe("env var substitution integration", () => {
   it("missing env var throws before validation", () => {
     const raw = {
       channels: {
-        telegram: { enabled: true, botToken: "$NONEXISTENT_VAR_99999" },
+        telegram: { enabled: true, botToken: "${NONEXISTENT_VAR_99999}" },
       },
     };
     expect(() => substituteEnvVarsDeep(raw)).toThrow("NONEXISTENT_VAR_99999");

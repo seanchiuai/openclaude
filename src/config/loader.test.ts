@@ -60,7 +60,7 @@ describe("loadConfig", () => {
         channels: {
           telegram: {
             enabled: true,
-            botToken: "$TEST_BOT_TOKEN",
+            botToken: "${TEST_BOT_TOKEN}",
           },
         },
       }),
@@ -82,6 +82,61 @@ describe("loadConfig", () => {
     );
 
     expect(() => loadConfig(configPath)).toThrow();
+  });
+
+  it("loads config with disabled channel missing env var (warning only)", () => {
+    const configPath = join(TEST_DIR, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: {
+          telegram: {
+            enabled: false,
+            botToken: "${TELEGRAM_BOT_TOKEN_MISSING_TEST}",
+          },
+        },
+      }),
+    );
+    // Should NOT throw — channel is disabled
+    const config = loadConfig(configPath);
+    expect(config.channels.telegram?.enabled).toBe(false);
+  });
+
+  it("throws for enabled channel with missing env var", () => {
+    const configPath = join(TEST_DIR, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: {
+          telegram: {
+            enabled: true,
+            botToken: "${TELEGRAM_BOT_TOKEN_MISSING_TEST}",
+          },
+        },
+      }),
+    );
+    expect(() => loadConfig(configPath)).toThrow(/TELEGRAM_BOT_TOKEN_MISSING_TEST/);
+  });
+
+  it("substitutes env vars using braced ${VAR} syntax", () => {
+    const configPath = join(TEST_DIR, "config.json");
+    process.env.TEST_BOT_TOKEN_BRACED = "braced-token";
+
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: {
+          telegram: {
+            enabled: true,
+            botToken: "${TEST_BOT_TOKEN_BRACED}",
+          },
+        },
+      }),
+    );
+
+    const config = loadConfig(configPath);
+    expect(config.channels.telegram?.botToken).toBe("braced-token");
+    delete process.env.TEST_BOT_TOKEN_BRACED;
   });
 });
 
