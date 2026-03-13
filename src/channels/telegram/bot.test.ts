@@ -24,6 +24,40 @@ vi.mock("@grammyjs/transformer-throttler", () => ({
 vi.mock("./send.js", () => ({
   sendText: vi.fn().mockResolvedValue({ messageId: 1, success: true }),
   sendMedia: vi.fn().mockResolvedValue({ messageId: 2, success: true }),
+  reactMessage: vi.fn().mockResolvedValue({ ok: true }),
+}));
+vi.mock("../typing.js", () => ({
+  createTypingCallbacks: vi.fn().mockReturnValue({
+    onReplyStart: vi.fn().mockResolvedValue(undefined),
+    onIdle: vi.fn(),
+    onCleanup: vi.fn(),
+  }),
+}));
+vi.mock("./sendchataction-401-backoff.js", () => ({
+  createTelegramSendChatActionHandler: vi.fn().mockReturnValue({
+    sendChatAction: vi.fn().mockResolvedValue(undefined),
+    isSuspended: vi.fn().mockReturnValue(false),
+    reset: vi.fn(),
+  }),
+}));
+vi.mock("../status-reactions.js", () => ({
+  createStatusReactionController: vi.fn().mockReturnValue({
+    setQueued: vi.fn(),
+    setThinking: vi.fn(),
+    setTool: vi.fn(),
+    setDone: vi.fn().mockResolvedValue(undefined),
+    setError: vi.fn().mockResolvedValue(undefined),
+    clear: vi.fn().mockResolvedValue(undefined),
+    restoreInitial: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+vi.mock("./status-reaction-variants.js", () => ({
+  resolveTelegramStatusReactionEmojis: vi.fn().mockReturnValue({
+    queued: "👀", thinking: "🤔", tool: "🔥", coding: "👨‍💻",
+    web: "⚡", done: "👍", error: "😱", stallSoft: "🥱", stallHard: "😨",
+  }),
+  buildTelegramStatusReactionVariants: vi.fn().mockReturnValue(new Map()),
+  resolveTelegramReactionVariant: vi.fn().mockReturnValue("👀"),
 }));
 
 import { createTelegramChannel } from "./bot.js";

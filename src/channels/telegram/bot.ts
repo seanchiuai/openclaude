@@ -7,8 +7,15 @@
  */
 import { Bot } from "grammy";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
-import { sendText, sendMedia } from "./send.js";
-import { startTyping } from "./typing.js";
+import { sendText, sendMedia, reactMessage } from "./send.js";
+import { createTypingCallbacks } from "../typing.js";
+import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
+import { createStatusReactionController } from "../status-reactions.js";
+import {
+  resolveTelegramStatusReactionEmojis,
+  buildTelegramStatusReactionVariants,
+  resolveTelegramReactionVariant,
+} from "./status-reaction-variants.js";
 import type {
   ChannelAdapter,
   InboundMessage,
@@ -41,6 +48,16 @@ export function createTelegramChannel(
   // Apply API throttler
   bot.api.config.use(apiThrottler());
 
+  // Global 401 backoff handler (shared across all chats)
+  const chatActionHandler = createTelegramSendChatActionHandler({
+    sendChatActionFn: (chatId, action) => bot.api.sendChatAction(String(chatId), action),
+    logger: (msg) => console.warn(`[telegram] ${msg}`),
+  });
+
+  // Resolve emoji variants once at startup
+  const emojis = resolveTelegramStatusReactionEmojis({ initialEmoji: "👀" });
+  const variantsByEmoji = buildTelegramStatusReactionVariants(emojis);
+
   function shouldSkipMessage(ctx: {
     chat: { type: string };
     message: { text?: string; caption?: string; reply_to_message?: { from?: { id: number } } };
@@ -57,6 +74,50 @@ export function createTelegramChannel(
       return false;
     }
     return true;
+  }
+
+  async function withTypingAndReactions(
+    chatId: string,
+    messageId: number,
+    handler: () => Promise<string>,
+  ): Promise<void> {
+    const reactionController = createStatusReactionController({
+      enabled: true,
+      adapter: {
+        setReaction: async (emoji) => {
+          const resolved = resolveTelegramReactionVariant({
+            requestedEmoji: emoji,
+            variantsByRequestedEmoji: variantsByEmoji,
+          });
+          if (resolved) {
+            await reactMessage(bot, chatId, messageId, resolved);
+          }
+        },
+      },
+      initialEmoji: "👀",
+      emojis,
+    });
+    reactionController.setQueued();
+
+    const typing = createTypingCallbacks({
+      start: () => chatActionHandler.sendChatAction(chatId, "typing"),
+      onStartError: (err) => console.warn("[telegram] typing error:", err),
+      maxDurationMs: 300_000,
+    });
+    await typing.onReplyStart();
+
+    try {
+      const response = await handler();
+      typing.onIdle?.();
+      await reactionController.setDone();
+      if (response) {
+        await sendText(bot, chatId, response);
+      }
+    } catch (err) {
+      typing.onCleanup?.();
+      await reactionController.setError();
+      throw err;
+    }
   }
 
   // Message handler
@@ -81,17 +142,11 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    const typing = startTyping(bot, String(ctx.chat.id));
-    try {
-      const response = await onMessage(message);
-      typing.stop();
-      if (response) {
-        await sendText(bot, String(ctx.chat.id), response);
-      }
-    } catch (err) {
-      typing.stop();
-      throw err;
-    }
+    await withTypingAndReactions(
+      String(ctx.chat.id),
+      ctx.message.message_id,
+      () => onMessage(message),
+    );
   });
 
   // Photo handler
@@ -120,17 +175,11 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    const typing = startTyping(bot, String(ctx.chat.id));
-    try {
-      const response = await onMessage(message);
-      typing.stop();
-      if (response) {
-        await sendText(bot, String(ctx.chat.id), response);
-      }
-    } catch (err) {
-      typing.stop();
-      throw err;
-    }
+    await withTypingAndReactions(
+      String(ctx.chat.id),
+      ctx.message.message_id,
+      () => onMessage(message),
+    );
   });
 
   // Document handler
@@ -160,17 +209,11 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    const typing = startTyping(bot, String(ctx.chat.id));
-    try {
-      const response = await onMessage(message);
-      typing.stop();
-      if (response) {
-        await sendText(bot, String(ctx.chat.id), response);
-      }
-    } catch (err) {
-      typing.stop();
-      throw err;
-    }
+    await withTypingAndReactions(
+      String(ctx.chat.id),
+      ctx.message.message_id,
+      () => onMessage(message),
+    );
   });
 
   async function startPolling(): Promise<void> {
