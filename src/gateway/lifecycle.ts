@@ -6,6 +6,7 @@ import { writeFileSync, unlinkSync, existsSync, readFileSync } from "node:fs";
 import { paths } from "../config/paths.js";
 import { ensureDirectories, loadConfig } from "../config/loader.js";
 import { createLogger } from "../logging/logger.js";
+import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat, markActivity } from "../logging/diagnostic.js";
 import { createProcessPool } from "../engine/pool.js";
 import { createGatewayApp, startHttpServer } from "./http.js";
 import { createAuthMiddleware } from "./auth.js";
@@ -152,15 +153,20 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   }
 
   // Router returns response text — the channel bot sends it back directly
-  const router = createRouter({ pool, memoryManager, cronService, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
+  const rawRouter = createRouter({ pool, memoryManager, cronService, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
+  const router: typeof rawRouter = (msg, onEvent) => {
+    markActivity();
+    return rawRouter(msg, onEvent);
+  };
 
   // Create auth middleware
   const authResult = createAuthMiddleware(config.gateway.auth);
 
   // Start HTTP server
+  const appStartedAt = Date.now();
   const app = createGatewayApp({
     pool,
-    startedAt: Date.now(),
+    startedAt: appStartedAt,
     channels: channelNames,
     cronService,
     memoryManager,
@@ -168,6 +174,10 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     authMiddleware: authResult.middleware,
   });
   const server = startHttpServer(app, gatewayPort);
+  const startedAt = Date.now();
+
+  // Start diagnostic heartbeat
+  startDiagnosticHeartbeat({ pool, cronService, startedAt: appStartedAt });
 
   // Start Telegram if configured
   if (config.channels.telegram?.enabled) {
@@ -241,6 +251,9 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
         // Best effort
       }
     }
+
+    // Stop diagnostic heartbeat
+    stopDiagnosticHeartbeat();
 
     // Drain process pool
     await pool.drain();
