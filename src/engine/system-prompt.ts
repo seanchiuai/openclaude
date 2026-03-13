@@ -7,6 +7,8 @@
  */
 import os from "node:os";
 import type { SkillEntry } from "../skills/loader.js";
+import type { EmbeddedContextFile } from "./workspace.js";
+import { DEFAULT_SOUL_FILENAME } from "./workspace.js";
 
 const SILENT_REPLY_TOKEN = "NO_REPLY";
 const HEARTBEAT_TOKEN = "HEARTBEAT_OK";
@@ -30,6 +32,10 @@ export interface SystemPromptParams {
   heartbeatPrompt?: string;
   /** Workspace / working directory */
   workspaceDir?: string;
+  /** Bootstrap context files (AGENTS.md, SOUL.md, etc.) */
+  contextFiles?: EmbeddedContextFile[];
+  /** Truncation warnings from bootstrap file loading */
+  bootstrapTruncationWarnings?: string[];
 }
 
 function buildSkillsSection(skills: SkillEntry[]): string[] {
@@ -177,6 +183,11 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     "Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.",
     "",
 
+    // --- Workspace Files (injected) — matches OpenClaw ---
+    "## Workspace Files (injected)",
+    "These user-editable files are loaded by OpenClaude and included below in Project Context.",
+    "",
+
     // --- Reply Tags ---
     ...buildReplyTagsSection(),
 
@@ -213,6 +224,39 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
   // --- Extra system prompt (e.g. group chat context) ---
   if (params.extraSystemPrompt?.trim()) {
     lines.push("## Additional Context", params.extraSystemPrompt.trim(), "");
+  }
+
+  // --- Project Context (bootstrap files) — matches OpenClaw ---
+  const contextFiles = params.contextFiles ?? [];
+  const truncationWarnings = (params.bootstrapTruncationWarnings ?? []).filter(
+    (line) => line.trim().length > 0,
+  );
+  if (contextFiles.length > 0 || truncationWarnings.length > 0) {
+    lines.push("# Project Context", "");
+    if (contextFiles.length > 0) {
+      const hasSoulFile = contextFiles.some((file) => {
+        const normalizedPath = file.path.trim().replace(/\\/g, "/");
+        const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
+        return baseName.toLowerCase() === DEFAULT_SOUL_FILENAME.toLowerCase();
+      });
+      lines.push("The following project context files have been loaded:");
+      if (hasSoulFile) {
+        lines.push(
+          "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.",
+        );
+      }
+      lines.push("");
+    }
+    if (truncationWarnings.length > 0) {
+      lines.push("Bootstrap truncation warning:");
+      for (const warning of truncationWarnings) {
+        lines.push(`- ${warning}`);
+      }
+      lines.push("");
+    }
+    for (const file of contextFiles) {
+      lines.push(`## ${file.path}`, "", file.content, "");
+    }
   }
 
   // --- Runtime ---

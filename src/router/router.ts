@@ -23,6 +23,10 @@ import type { SkillEntry } from "../skills/loader.js";
 import type { McpServerConfig } from "../config/types.js";
 import { paths } from "../config/paths.js";
 import { buildSystemPrompt } from "../engine/system-prompt.js";
+import {
+  loadWorkspaceBootstrapFiles,
+  buildBootstrapContextFiles,
+} from "../engine/workspace.js";
 
 const IDLE_THRESHOLD = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -87,12 +91,18 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
+    // Load workspace bootstrap files (AGENTS.md, SOUL.md, etc.)
+    const bootstrapFiles = loadWorkspaceBootstrapFiles();
+    const { contextFiles, truncationWarnings } = buildBootstrapContextFiles(bootstrapFiles);
+
     return buildSystemPrompt({
       skills,
       memoryContext,
       hasGatewayTools: !!gatewayUrl,
       channel: message.channel,
       workspaceDir: process.cwd(),
+      contextFiles,
+      bootstrapTruncationWarnings: truncationWarnings,
     });
   }
 

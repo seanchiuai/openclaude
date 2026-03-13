@@ -96,6 +96,15 @@ vi.mock("./loader.js", () => {
     }
   }
 
+  function parseFrontmatterBool(value: unknown, defaultValue: boolean): boolean {
+    if (value === undefined || value === null || value === "") return defaultValue;
+    if (typeof value === "boolean") return value;
+    const str = String(value).trim().toLowerCase();
+    if (str === "true" || str === "yes" || str === "1") return true;
+    if (str === "false" || str === "no" || str === "0") return false;
+    return defaultValue;
+  }
+
   async function loadSkills(skillsDir: string) {
     const files = findSkillFiles(skillsDir);
     const skills: Array<{
@@ -104,6 +113,7 @@ vi.mock("./loader.js", () => {
       triggers?: string[];
       body: string;
       path: string;
+      invocation: { userInvocable: boolean; disableModelInvocation: boolean };
     }> = [];
 
     for (const filePath of files) {
@@ -119,6 +129,16 @@ vi.mock("./loader.js", () => {
         triggers: meta.triggers as string[] | undefined,
         body,
         path: filePath,
+        invocation: {
+          userInvocable: parseFrontmatterBool(
+            meta["user-invocable"] ?? meta["user_invocable"],
+            true,
+          ),
+          disableModelInvocation: parseFrontmatterBool(
+            meta["disable-model-invocation"] ?? meta["disable_model_invocation"],
+            false,
+          ),
+        },
       });
     }
 
@@ -263,5 +283,41 @@ Review my recent git commits.`,
   it("empty skills directory returns empty array", async () => {
     const skills = await loadSkills(tempDir);
     expect(skills).toEqual([]);
+  });
+
+  it("defaults invocation to userInvocable=true, disableModelInvocation=false", async () => {
+    writeFileSync(
+      join(tempDir, "SKILL.md"),
+      `---
+name: basic
+description: A basic skill
+---
+Do something.`,
+    );
+
+    const skills = await loadSkills(tempDir);
+    expect(skills[0]!.invocation).toEqual({
+      userInvocable: true,
+      disableModelInvocation: false,
+    });
+  });
+
+  it("parses user-invocable and disable-model-invocation from frontmatter", async () => {
+    writeFileSync(
+      join(tempDir, "SKILL.md"),
+      `---
+name: internal
+description: Internal skill
+user-invocable: false
+disable-model-invocation: true
+---
+Internal only.`,
+    );
+
+    const skills = await loadSkills(tempDir);
+    expect(skills[0]!.invocation).toEqual({
+      userInvocable: false,
+      disableModelInvocation: true,
+    });
   });
 });

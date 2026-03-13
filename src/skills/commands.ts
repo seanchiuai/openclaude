@@ -57,20 +57,33 @@ export function buildSkillCommandSpecs(
     used.add(reserved.toLowerCase());
   }
 
+  const rawDescription = (entry: SkillEntry): string => {
+    const raw = entry.description.trim() || entry.name;
+    return raw.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+      ? raw.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1) + "…"
+      : raw;
+  };
+
   const specs: SkillCommandSpec[] = [];
   for (const entry of userInvocable) {
+    // Register the skill name as a command
     const base = sanitizeSkillCommandName(entry.name);
     if (!base) continue;
     const unique = resolveUniqueSkillCommandName(base, used);
     used.add(unique.toLowerCase());
+    specs.push({ name: unique, skillName: entry.name, description: rawDescription(entry) });
 
-    const rawDescription = entry.description.trim() || entry.name;
-    const description =
-      rawDescription.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
-        ? rawDescription.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1) + "…"
-        : rawDescription;
-
-    specs.push({ name: unique, skillName: entry.name, description });
+    // Register each trigger as an additional command spec (OpenClaude extension).
+    // This allows triggers like "/standup" to resolve for skill "daily-standup".
+    if (entry.triggers) {
+      for (const trigger of entry.triggers) {
+        const triggerBase = sanitizeSkillCommandName(trigger.replace(/^\//, ""));
+        if (!triggerBase || triggerBase === unique) continue;
+        const triggerUnique = resolveUniqueSkillCommandName(triggerBase, used);
+        used.add(triggerUnique.toLowerCase());
+        specs.push({ name: triggerUnique, skillName: entry.name, description: rawDescription(entry) });
+      }
+    }
   }
   return specs;
 }
