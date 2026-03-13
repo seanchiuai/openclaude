@@ -285,4 +285,18 @@ describe("createProcessPool", () => {
     const pool = createProcessPool(4);
     expect(pool.getSession("nope")).toBeUndefined();
   });
+
+  it("drain() collects PIDs and waits for exit", async () => {
+    const pool = createProcessPool(2);
+    setupMockSpawn();
+
+    pool.submit({ sessionId: "t1", prompt: "a" });
+    pool.submit({ sessionId: "t2", prompt: "b" });
+
+    // drain should still resolve cleanly (mock PIDs don't exist as real processes)
+    await pool.drain();
+
+    expect(pool.stats().running).toBe(0);
+    expect(pool.stats().queued).toBe(0);
+  });
 });

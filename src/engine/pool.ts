@@ -99,6 +99,28 @@ export function createProcessPool(maxConcurrent = 4) {
     return true;
   }
 
+  function waitForProcessesExit(pids: number[], timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + timeoutMs;
+      const check = () => {
+        const alive = pids.filter((pid) => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        if (alive.length === 0 || Date.now() >= deadline) {
+          resolve();
+          return;
+        }
+        setTimeout(check, 50);
+      };
+      check();
+    });
+  }
+
   async function drain(): Promise<void> {
     draining = true;
 
@@ -107,12 +129,21 @@ export function createProcessPool(maxConcurrent = 4) {
       queued.reject(new Error("Pool draining"));
     }
 
-    // Kill all running sessions
+    // Kill all running sessions and collect PIDs
+    const pidsToWait: number[] = [];
     for (const [id, session] of running) {
       killProcessGroup(session.pid);
+      if (session.pid !== undefined) {
+        pidsToWait.push(session.pid);
+      }
       session.status = "killed";
       session.completedAt = Date.now();
       running.delete(id);
+    }
+
+    // Wait for processes to actually exit (up to 2s)
+    if (pidsToWait.length > 0) {
+      await waitForProcessesExit(pidsToWait, 2000);
     }
   }
 
