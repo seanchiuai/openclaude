@@ -4,3 +4,5 @@ dist/
 .worktrees/
 openclaw-source/
 ~/
+.claude/
+.DS_Store

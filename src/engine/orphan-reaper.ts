@@ -6,6 +6,9 @@
  * then waits for the port to be released before proceeding.
  */
 import { spawnSync } from "node:child_process";
+import { createLogger } from "../logging/logger.js";
+
+const log = createLogger("orphan-reaper");
 
 const SPAWN_TIMEOUT_MS = 2000;
 const STALE_SIGTERM_WAIT_MS = 600;
@@ -83,12 +86,12 @@ export function findGatewayPidsOnPortSync(
   });
 
   if (res.error) {
-    console.error(`[orphan-reaper] lsof failed: ${(res.error as NodeJS.ErrnoException).code ?? res.error.message}`);
+    log.warn(`lsof failed: ${(res.error as NodeJS.ErrnoException).code ?? res.error.message}`);
     return [];
   }
   if (res.status === 1) return [];
   if (res.status !== 0) {
-    console.error(`[orphan-reaper] lsof exited with status ${res.status}`);
+    log.warn(`lsof exited with status ${res.status}`);
     return [];
   }
 
@@ -156,7 +159,7 @@ function waitForPortFreeSync(port: number): void {
     if (result.free === null && result.permanent) return;
     sleepSync(PORT_FREE_POLL_INTERVAL_MS);
   }
-  console.error(`[orphan-reaper] port ${port} still in use after ${PORT_FREE_TIMEOUT_MS}ms; proceeding anyway`);
+  log.warn(`port ${port} still in use after ${PORT_FREE_TIMEOUT_MS}ms; proceeding anyway`);
 }
 
 /**
@@ -168,9 +171,7 @@ export function cleanStaleGatewayProcessesSync(port: number): number[] {
     const stalePids = findGatewayPidsOnPortSync(port);
     if (stalePids.length === 0) return [];
 
-    console.error(
-      `[orphan-reaper] killing ${stalePids.length} stale gateway process(es): ${stalePids.join(", ")}`,
-    );
+    log.info(`killing ${stalePids.length} stale gateway process(es): ${stalePids.join(", ")}`);
     const killed = terminateStaleProcessesSync(stalePids);
     waitForPortFreeSync(port);
     return killed;
