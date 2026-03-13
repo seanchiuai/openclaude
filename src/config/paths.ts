@@ -21,4 +21,5 @@ export const paths = {
   workspace: join(BASE_DIR, "workspace"),
   heartbeat: join(BASE_DIR, "HEARTBEAT.md"),
   pidFile: join(BASE_DIR, "gateway.pid"),
+  sessionsMap: join(BASE_DIR, "sessions-map.json"),
 } as const;

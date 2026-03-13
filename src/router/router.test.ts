@@ -1,4 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock fs for session map persistence (must be before imports)
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: vi.fn(() => { throw new Error("ENOENT"); }),
+    writeFileSync: vi.fn(),
+  };
+});
+
 import { parseCommand, deriveSessionKey, createRouter } from "./router.js";
 import type { InboundMessage } from "../channels/types.js";
 
@@ -286,5 +297,76 @@ describe("createRouter", () => {
     const result = await router(makeMessage({ text: "do something" }));
 
     expect(result).toBe("Error: subprocess crashed");
+  });
+
+  it("first message passes claudeSessionId with --session-id (resumeSession false)", async () => {
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
+    await router(makeMessage({ chatId: "50", text: "first message" }));
+
+    expect(pool.submit).toHaveBeenCalledOnce();
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.claudeSessionId).toBeDefined();
+    expect(submitArg.resumeSession).toBe(false);
+  });
+
+  it("second message in same chat passes resumeSession true", async () => {
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
+    await router(makeMessage({ chatId: "51", text: "first" }));
+    await router(makeMessage({ chatId: "51", text: "second" }));
+
+    expect(pool.submit).toHaveBeenCalledTimes(2);
+    const first = pool.submit.mock.calls[0][0];
+    const second = pool.submit.mock.calls[1][0];
+
+    // Same Claude session UUID
+    expect(first.claudeSessionId).toBe(second.claudeSessionId);
+    // First is not resume, second is resume
+    expect(first.resumeSession).toBe(false);
+    expect(second.resumeSession).toBe(true);
+  });
+
+  it("second message skips systemPrompt (context already in session)", async () => {
+    const mockMemoryManager = {
+      search: vi.fn().mockResolvedValue([
+        { path: "/memory/test.md", snippet: "test memory", score: 0.9, citation: "test.md#L1" },
+      ]),
+      status: vi.fn(),
+      sync: vi.fn(),
+      ingest: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const router = createRouter({
+      pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"],
+      memoryManager: mockMemoryManager as unknown as Parameters<typeof createRouter>[0]["memoryManager"],
+    });
+
+    await router(makeMessage({ chatId: "52", text: "first" }));
+    await router(makeMessage({ chatId: "52", text: "second" }));
+
+    const first = pool.submit.mock.calls[0][0];
+    const second = pool.submit.mock.calls[1][0];
+
+    expect(first.systemPrompt).toBeDefined();
+    expect(second.systemPrompt).toBeUndefined();
+  });
+
+  it("/reset clears session so next message starts fresh", async () => {
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
+
+    // Send first message to create session
+    await router(makeMessage({ chatId: "53", text: "hello" }));
+    const firstClaudeSessionId = pool.submit.mock.calls[0][0].claudeSessionId;
+
+    // Reset
+    const resetResult = await router(makeMessage({ chatId: "53", text: "/reset" }));
+    expect(resetResult).toContain("Session reset");
+
+    // Send another message — should get a new session
+    await router(makeMessage({ chatId: "53", text: "hello again" }));
+    const secondClaudeSessionId = pool.submit.mock.calls[1][0].claudeSessionId;
+
+    expect(secondClaudeSessionId).not.toBe(firstClaudeSessionId);
+    expect(pool.submit.mock.calls[1][0].resumeSession).toBe(false);
   });
 });

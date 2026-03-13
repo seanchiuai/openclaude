@@ -19,3 +19,10 @@ export type CommandHandler = (
 ) => Promise<string>;
 
 export type Router = (message: InboundMessage) => Promise<string>;
+
+export interface ChatSession {
+  sessionId: string;        // Internal ID for pool/directory (e.g. "main-abc123")
+  claudeSessionId: string;  // UUID for Claude Code --session-id/--resume
+  lastMessageAt: number;    // For idle reset
+  messageCount: number;     // 0 = first message (use --session-id), 1+ = resume
+}

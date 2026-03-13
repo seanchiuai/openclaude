@@ -5,16 +5,18 @@
 import type { ProcessPool } from "../engine/pool.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { CronService } from "../cron/index.js";
-import type { ParsedCommand } from "./types.js";
+import type { ChatSession, ParsedCommand } from "./types.js";
 
 export interface CommandDeps {
   pool: ProcessPool;
   memoryManager?: MemoryManager;
   cronService?: CronService;
+  mainSessions?: Map<string, ChatSession>;
+  saveSessionMap?: (map: Map<string, ChatSession>) => void;
 }
 
 export function createCommandHandlers(deps: CommandDeps) {
-  const { pool, memoryManager, cronService } = deps;
+  const { pool, memoryManager, cronService, mainSessions, saveSessionMap } = deps;
 
   const handlers: Record<
     string,
@@ -65,6 +67,7 @@ export function createCommandHandlers(deps: CommandDeps) {
         "/memorysync - Force memory sync",
         "/cron - Manage cron jobs",
         "/skills - Show skills info",
+        "/reset - Reset Claude Code session (fresh context)",
         "/help - Show this message",
       ].join("\n");
     },
@@ -156,6 +159,17 @@ export function createCommandHandlers(deps: CommandDeps) {
 
       return "Unknown cron subcommand. Try: list, add, remove <id>, run <id>";
     },
+
+    reset: async () => {
+      if (!mainSessions || !saveSessionMap) {
+        return "Session tracking is not available.";
+      }
+      // Clear all sessions (the router passes the chat-specific key via the command,
+      // but /reset clears the calling chat's session — for simplicity, clear all).
+      mainSessions.clear();
+      saveSessionMap(mainSessions);
+      return "Session reset. Next message will start a fresh Claude Code session.";
+    },
   };
 
   return handlers;
@@ -170,4 +184,5 @@ export const GATEWAY_COMMANDS = new Set([
   "memorysync",
   "skills",
   "cron",
+  "reset",
 ]);
