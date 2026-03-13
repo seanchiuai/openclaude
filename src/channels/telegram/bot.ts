@@ -7,7 +7,6 @@
  */
 import { Bot } from "grammy";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
-import { createLogger } from "../../logging/logger.js";
 import { sendText, sendMedia, reactMessage } from "./send.js";
 import { createTypingCallbacks } from "../typing.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
@@ -34,8 +33,6 @@ const BACKOFF = {
   jitter: 0.25,
 };
 
-const log = createLogger("telegram");
-
 export function createTelegramChannel(
   config: TelegramChannelConfig,
   onMessage: MessageHandler,
@@ -54,7 +51,7 @@ export function createTelegramChannel(
   // Global 401 backoff handler (shared across all chats)
   const chatActionHandler = createTelegramSendChatActionHandler({
     sendChatActionFn: (chatId, action) => bot.api.sendChatAction(String(chatId), action),
-    logger: (msg) => log.warn(msg),
+    logger: (msg) => console.warn(`[telegram] ${msg}`),
   });
 
   // Resolve emoji variants once at startup
@@ -104,7 +101,7 @@ export function createTelegramChannel(
 
     const typing = createTypingCallbacks({
       start: () => chatActionHandler.sendChatAction(chatId, "typing"),
-      onStartError: (err) => log.warn("typing error", { error: err instanceof Error ? err.message : String(err) }),
+      onStartError: (err) => console.warn("[telegram] typing error:", err),
       maxDurationMs: 300_000,
     });
     await typing.onReplyStart();
@@ -155,7 +152,7 @@ export function createTelegramChannel(
         const response = await onMessage(message);
         if (response) await sendText(bot, String(ctx.chat.id), response);
       } catch (err) {
-        log.error("/stop error", { error: err instanceof Error ? err.message : String(err) });
+        console.error("[telegram] /stop error:", err);
       }
       return;
     }
@@ -167,7 +164,7 @@ export function createTelegramChannel(
       ctx.message.message_id,
       () => onMessage(message),
     ).catch((err) => {
-      log.error("handler error", { error: err instanceof Error ? err.message : String(err) });
+      console.error("[telegram] handler error:", err);
     });
   });
 
@@ -202,7 +199,7 @@ export function createTelegramChannel(
       ctx.message.message_id,
       () => onMessage(message),
     ).catch((err) => {
-      log.error("handler error", { error: err instanceof Error ? err.message : String(err) });
+      console.error("[telegram] handler error:", err);
     });
   });
 
@@ -238,7 +235,7 @@ export function createTelegramChannel(
       ctx.message.message_id,
       () => onMessage(message),
     ).catch((err) => {
-      log.error("handler error", { error: err instanceof Error ? err.message : String(err) });
+      console.error("[telegram] handler error:", err);
     });
   });
 
@@ -264,7 +261,9 @@ export function createTelegramChannel(
         const delay = computeBackoff(restartAttempts);
         const errMsg =
           err instanceof Error ? err.message : String(err);
-        log.error(`Polling error (attempt ${restartAttempts}): ${errMsg}. Retrying in ${delay}ms`);
+        console.error(
+          `[telegram] Polling error (attempt ${restartAttempts}): ${errMsg}. Retrying in ${delay}ms`,
+        );
 
         await sleep(delay, abortController.signal);
       }
@@ -273,7 +272,7 @@ export function createTelegramChannel(
 
   async function start(): Promise<void> {
     startPolling().catch((err) => {
-      log.fatal("Fatal polling error", { error: err instanceof Error ? err.message : String(err) });
+      console.error("[telegram] Fatal polling error:", err);
     });
   }
 

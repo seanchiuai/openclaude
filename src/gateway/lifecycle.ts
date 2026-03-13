@@ -5,7 +5,6 @@
 import { writeFileSync, unlinkSync, existsSync, readFileSync } from "node:fs";
 import { paths } from "../config/paths.js";
 import { ensureDirectories, loadConfig } from "../config/loader.js";
-import { createLogger } from "../logging/logger.js";
 import { createProcessPool } from "../engine/pool.js";
 import { createGatewayApp, startHttpServer } from "./http.js";
 import { createAuthMiddleware } from "./auth.js";
@@ -36,8 +35,6 @@ export interface Gateway {
   shutdown: () => Promise<void>;
 }
 
-const log = createLogger("gateway");
-
 export async function startGateway(configPath?: string): Promise<Gateway> {
   ensureDirectories();
 
@@ -54,7 +51,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
 
   // Fire-and-forget initial memory sync
   memoryManager.sync().catch((err: unknown) => {
-    log.warn("Initial memory sync failed", { error: err instanceof Error ? err.message : String(err) });
+    console.error("[gateway] Initial memory sync failed:", err instanceof Error ? err.message : String(err));
   });
 
   // Helper to deliver text to a channel adapter
@@ -70,7 +67,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   // Reap stale gateway processes from previous crash
   const reaped = cleanStaleGatewayProcessesSync(gatewayPort);
   if (reaped.length > 0) {
-    log.info(`Reaped ${reaped.length} stale process(es) from previous run`);
+    console.error(`[gateway] Reaped ${reaped.length} stale process(es) from previous run`);
   }
 
   const gatewayUrl = `http://localhost:${gatewayPort}`;
@@ -83,7 +80,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   // Sweep stale session directories on startup
   const sweepResult = sweepStaleSessions(paths.sessions);
   if (sweepResult.removed.length > 0) {
-    log.info(`Cleaned ${sweepResult.removed.length} stale session(s)`);
+    console.error(`[gateway] Cleaned ${sweepResult.removed.length} stale session(s)`);
   }
 
   // Cron service
@@ -110,7 +107,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       deliverResult: deliverToChannel,
     });
     cronService.start();
-    log.info("Cron service started");
+    console.error("[gateway] Cron service started");
   }
 
   // Heartbeat runner
@@ -144,13 +141,13 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       },
     );
     heartbeat.start();
-    log.info("Heartbeat started");
+    console.error("[gateway] Heartbeat started");
   }
 
   // Load skills from ~/.openclaude/skills/
   const skills = await loadSkills(paths.skills);
   if (skills.length > 0) {
-    log.info(`Loaded ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`);
+    console.error(`[gateway] Loaded ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`);
   }
 
   // Router returns response text — the channel bot sends it back directly
@@ -235,41 +232,41 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     await slack.start();
     channels.set("slack", slack);
     channelNames.push("slack");
-    log.info("Slack channel started");
+    console.error("[gateway] Slack channel started");
   }
 
   // Write PID file
   writePidFile();
 
-  log.info(`Started on port ${gatewayPort}`);
+  console.error(`[gateway] Started on port ${gatewayPort}`);
   if (channelNames.length > 0) {
-    log.info(`Channels: ${channelNames.join(", ")}`);
+    console.error(`[gateway] Channels: ${channelNames.join(", ")}`);
   }
 
   const shutdown = async () => {
-    log.info("Shutting down...");
+    console.error("[gateway] Shutting down...");
 
     // Stop heartbeat first
     if (heartbeat) {
       heartbeat.stop();
-      log.info("Heartbeat stopped");
+      console.error("[gateway] Heartbeat stopped");
     }
 
     // Stop cron
     if (cronService) {
       cronService.stop();
-      log.info("Cron service stopped");
+      console.error("[gateway] Cron service stopped");
     }
 
     // Close memory DB
     memoryManager.close();
-    log.info("Memory closed");
+    console.error("[gateway] Memory closed");
 
     // Stop channels
     for (const [name, channel] of channels) {
       try {
         await channel.stop();
-        log.info(`Stopped channel: ${name}`);
+        console.error(`[gateway] Stopped channel: ${name}`);
       } catch {
         // Best effort
       }
@@ -284,7 +281,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     // Remove PID file
     removePidFile();
 
-    log.info("Shutdown complete.");
+    console.error("[gateway] Shutdown complete.");
   };
 
   // Graceful shutdown on signals
@@ -296,7 +293,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
 
   // Last-resort crash handlers — best-effort cleanup on unhandled errors
   const onCrash = (err: unknown) => {
-    log.fatal("CRASH", { error: err instanceof Error ? err.message : String(err) });
+    console.error("[gateway] CRASH:", err instanceof Error ? err.message : String(err));
     // Best-effort: kill all known child processes
     for (const session of pool.listSessions()) {
       killProcessGroup(session.pid);
