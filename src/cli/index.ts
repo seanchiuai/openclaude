@@ -1,0 +1,227 @@
+#!/usr/bin/env node
+/**
+ * OpenClaude CLI entry point.
+ * Commands: start, stop, status, setup
+ */
+import { parseArgs } from "node:util";
+
+const { positionals } = parseArgs({
+  allowPositionals: true,
+  strict: false,
+});
+
+const command = positionals[0];
+
+switch (command) {
+  case "start":
+    await start();
+    break;
+  case "stop":
+    await stop();
+    break;
+  case "status":
+    await status();
+    break;
+  case "setup":
+    await setup();
+    break;
+  case "skills":
+    if (positionals[1] === "list") {
+      await skillsList();
+    } else {
+      printUsage();
+    }
+    break;
+  case "memory":
+    if (positionals[1] === "search" && positionals[2]) {
+      await memorySearch(positionals.slice(2).join(" "));
+    } else {
+      printUsage();
+    }
+    break;
+  case "logs":
+    await tailLogs();
+    break;
+  case "gateway":
+    if (positionals[1] === "run") {
+      await gatewayRun();
+    } else {
+      printUsage();
+    }
+    break;
+  default:
+    printUsage();
+}
+
+async function start() {
+  const { readPidFile } = await import("../gateway/lifecycle.js");
+  const {
+    installLaunchAgent,
+    isLaunchAgentLoaded,
+  } = await import("../gateway/launchd.js");
+
+  const existingPid = readPidFile();
+  if (existingPid) {
+    console.log(`OpenClaude is already running (PID ${existingPid}).`);
+    return;
+  }
+
+  if (process.platform === "darwin") {
+    try {
+      if (isLaunchAgentLoaded()) {
+        console.log("OpenClaude LaunchAgent is already loaded.");
+        return;
+      }
+      const nodePath = process.execPath;
+      const entryPath = new URL(import.meta.url).pathname;
+      installLaunchAgent(nodePath, entryPath);
+      console.log("OpenClaude started as LaunchAgent.");
+    } catch (err) {
+      console.error(
+        "Failed to install LaunchAgent, starting in foreground:",
+        err,
+      );
+      await gatewayRun();
+    }
+  } else {
+    // Non-macOS: run in foreground for now
+    await gatewayRun();
+  }
+}
+
+async function stop() {
+  const { readPidFile } = await import("../gateway/lifecycle.js");
+
+  if (process.platform === "darwin") {
+    const { stopLaunchAgent } = await import("../gateway/launchd.js");
+    stopLaunchAgent();
+    console.log("OpenClaude stop signal sent.");
+    return;
+  }
+
+  const pid = readPidFile();
+  if (!pid) {
+    console.log("OpenClaude is not running.");
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+    console.log(`OpenClaude stopped (PID ${pid}).`);
+  } catch {
+    console.log("OpenClaude is not running.");
+  }
+}
+
+async function status() {
+  const { readPidFile } = await import("../gateway/lifecycle.js");
+
+  const pid = readPidFile();
+  if (!pid) {
+    console.log("OpenClaude is not running.");
+    return;
+  }
+
+  console.log(`OpenClaude is running (PID ${pid}).`);
+
+  // Try to fetch status from HTTP endpoint
+  try {
+    const resp = await fetch("http://127.0.0.1:45557/api/status");
+    if (resp.ok) {
+      const data = await resp.json();
+      console.log(
+        `Uptime: ${Math.round((data as { uptime: number }).uptime / 1000)}s`,
+      );
+      console.log(
+        `Channels: ${((data as { channels: string[] }).channels ?? []).join(", ") || "none"}`,
+      );
+      const pool = (data as { pool: { running: number; queued: number; maxConcurrent: number } })
+        .pool;
+      console.log(
+        `Pool: ${pool.running}/${pool.maxConcurrent} running, ${pool.queued} queued`,
+      );
+    }
+  } catch {
+    // Gateway HTTP not reachable, that's ok
+  }
+}
+
+async function setup() {
+  const { ensureDirectories, writeDefaultConfig } = await import(
+    "../config/loader.js"
+  );
+
+  ensureDirectories();
+  writeDefaultConfig();
+  console.log("OpenClaude initialized.");
+  console.log("Edit ~/.openclaude/config.json to configure channels.");
+}
+
+async function skillsList() {
+  const { loadSkills } = await import("../skills/index.js");
+  const { paths } = await import("../config/paths.js");
+  const skills = await loadSkills(paths.skills);
+  if (skills.length === 0) {
+    console.log("No skills loaded.");
+    return;
+  }
+  for (const s of skills) {
+    console.log(`- ${s.name}: ${s.description}`);
+  }
+}
+
+async function memorySearch(query: string) {
+  const { createMemoryManager } = await import("../memory/index.js");
+  const { paths } = await import("../config/paths.js");
+  const manager = createMemoryManager({ dbPath: paths.memoryDb, workspaceDir: paths.base });
+  await manager.sync();
+  const results = await manager.search(query);
+  if (results.length === 0) {
+    console.log("No results found.");
+  } else {
+    for (const r of results) {
+      console.log(`[${r.score.toFixed(2)}] ${r.citation ?? r.path}`);
+      console.log(`  ${r.snippet.slice(0, 120)}`);
+    }
+  }
+  manager.close();
+}
+
+async function tailLogs() {
+  const { paths } = await import("../config/paths.js");
+  const { join } = await import("node:path");
+  const { createReadStream, existsSync } = await import("node:fs");
+  const logFile = join(paths.logs, "gateway.log");
+  if (!existsSync(logFile)) {
+    console.log("No log file found.");
+    return;
+  }
+  const stream = createReadStream(logFile, { encoding: "utf-8", start: 0 });
+  stream.pipe(process.stdout);
+}
+
+async function gatewayRun() {
+  const { startGateway } = await import("../gateway/lifecycle.js");
+  await startGateway();
+  // Keep process alive
+  await new Promise(() => {});
+}
+
+function printUsage() {
+  console.log(`OpenClaude - Autonomous AI assistant powered by Claude Code CLI
+
+Usage: openclaude <command>
+
+Commands:
+  start   Start the OpenClaude gateway daemon
+  stop    Stop the gateway daemon
+  status  Show gateway status
+  setup   Initialize config and directories
+  skills list  List loaded skills
+  memory search <query>  Search memory
+  logs         Tail gateway logs
+
+Internal:
+  gateway run   Run gateway in foreground (used by launchd)
+`);
+}
