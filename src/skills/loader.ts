@@ -1,5 +1,8 @@
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "../logging/logger.js";
+
+const log = createLogger("skills");
 
 export interface SkillInvocationPolicy {
   userInvocable: boolean;
@@ -32,7 +35,7 @@ function findSkillFiles(dir: string): string[] {
       results.push(...findSkillFiles(full));
     } else if (entry === "SKILL.md") {
       if (stat.size > MAX_SKILL_FILE_BYTES) {
-        console.warn(`Skipping oversized skill file (${stat.size} bytes): ${full}`);
+        log.warn(`Skipping oversized skill file (${stat.size} bytes): ${full}`);
         continue;
       }
       results.push(full);
@@ -122,7 +125,7 @@ export async function loadSkills(skillsDir: string): Promise<SkillEntry[]> {
     const content = readFileSync(filePath, "utf-8");
     const { meta, body } = parseFrontmatter(content);
     if (!meta) {
-      console.warn(`Skipping invalid skill file: ${filePath}`);
+      log.warn(`Skipping invalid skill file: ${filePath}`);
       continue;
     }
     skills.push({

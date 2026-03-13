@@ -7,6 +7,7 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "./paths.js";
+import { createLogger } from "../logging/logger.js";
 import { resolveConfigEnvVars } from "./env-substitution.js";
 import type { EnvSubstitutionWarning } from "./env-substitution.js";
 import { OpenClaudeConfigSchema } from "./schema.js";
@@ -57,8 +58,8 @@ export function loadConfig(configPath?: string): OpenClaudeConfig {
 
   // Log warnings for disabled channels (non-fatal)
   for (const w of envWarnings) {
-    console.error(
-      `Warning: env var \${${w.varName}} is not set (at ${w.configPath}). Ignored because channel is disabled.`,
+    createLogger("config").warn(
+      `env var \${${w.varName}} is not set (at ${w.configPath}). Ignored because channel is disabled.`,
     );
   }
 

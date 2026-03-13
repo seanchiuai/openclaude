@@ -196,7 +196,7 @@ describe("createTypingCallbacks", () => {
   describe("TTL safety", () => {
     it("auto-stops typing after maxDurationMs", async () => {
       await withFakeTimers(async () => {
-        const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
         const { start, stop, callbacks } = createTypingHarness({ maxDurationMs: 10_000 });
 
         await callbacks.onReplyStart();
@@ -208,15 +208,15 @@ describe("createTypingCallbacks", () => {
 
         // Should auto-stop
         expect(stop).toHaveBeenCalledTimes(1);
-        expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining("TTL exceeded"));
+        expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("TTL exceeded"));
 
-        consoleWarn.mockRestore();
+        stderrWrite.mockRestore();
       });
     });
 
     it("does not auto-stop if idle is called before TTL", async () => {
       await withFakeTimers(async () => {
-        const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
         const { stop, callbacks } = createTypingHarness({ maxDurationMs: 10_000 });
 
         await callbacks.onReplyStart();
@@ -232,11 +232,14 @@ describe("createTypingCallbacks", () => {
         await vi.advanceTimersByTimeAsync(10_000);
 
         // Should not have triggered TTL warning
-        expect(consoleWarn).not.toHaveBeenCalled();
+        const ttlCalls = stderrWrite.mock.calls.filter(
+          (c) => typeof c[0] === "string" && c[0].includes("TTL exceeded"),
+        );
+        expect(ttlCalls).toHaveLength(0);
         // Stop should still be called only once
         expect(stop).toHaveBeenCalledTimes(1);
 
-        consoleWarn.mockRestore();
+        stderrWrite.mockRestore();
       });
     });
 
