@@ -3,11 +3,11 @@
  *
  * spawnClaude(task) spawns a `claude -p` subprocess with session isolation.
  * - Writes prompt to a file for record-keeping, and pipes it via stdin
- * - Passes -p, --output-format json (no --input-file, no --dangerously-skip-permissions)
+ * - Passes -p, --output-format stream-json (no --input-file, no --dangerously-skip-permissions)
  * - Unsets CLAUDECODE env var to avoid nesting
  * - Spawns with detached:true for process group kill
- * - Parses JSON array output → finds last "result" event → ClaudeResult
- * - Handles non-JSON stdout gracefully (uses raw text)
+ * - Parses NDJSON stream output → finds last "result" event → ClaudeResult
+ * - Handles non-JSON stdout gracefully (skips non-JSON lines)
  * - Non-zero exit code → result.exitCode reflects it
  * - Timeout → SIGKILL to process group (negative pid)
  * - AbortController used for timeout cancellation
@@ -90,13 +90,13 @@ describe("spawnClaude", () => {
     expect(spawnArgs).not.toContain("Hello world");
   });
 
-  it("passes -p and --output-format json, pipes prompt via stdin", () => {
+  it("passes -p and --output-format stream-json, pipes prompt via stdin", () => {
     spawnClaude({ sessionId: "s1", prompt: "test prompt" });
 
     const args = mockSpawn.mock.calls[0][1] as string[];
     expect(args).toContain("-p");
     expect(args).toContain("--output-format");
-    expect(args).toContain("json");
+    expect(args).toContain("stream-json");
     // No --input-file (doesn't exist) or --dangerously-skip-permissions (forces API auth)
     expect(args).not.toContain("--input-file");
     expect(args).not.toContain("--dangerously-skip-permissions");
@@ -130,15 +130,16 @@ describe("spawnClaude", () => {
     );
   });
 
-  it("parses JSON array output → extracts result event", async () => {
+  it("parses NDJSON stream output → extracts result event", async () => {
     const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
 
-    const jsonOutput = JSON.stringify([
-      { type: "system", subtype: "init", session_id: "abc" },
-      { type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } },
-      { type: "result", subtype: "success", result: "Hello from Claude", is_error: false },
-    ]);
-    mockProc._stdout.emit("data", Buffer.from(jsonOutput));
+    // NDJSON: one JSON object per line
+    const ndjson = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "abc" }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } }),
+      JSON.stringify({ type: "result", subtype: "success", result: "Hello from Claude", is_error: false }),
+    ].join("\n") + "\n";
+    mockProc._stdout.emit("data", Buffer.from(ndjson));
     mockProc.emit("close", 0, null);
 
     const result = await promise;
@@ -148,15 +149,17 @@ describe("spawnClaude", () => {
     expect(result.duration).toBeGreaterThanOrEqual(0);
   });
 
-  it("handles non-JSON stdout gracefully", async () => {
+  it("handles non-JSON stdout gracefully (returns empty text)", async () => {
     const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
 
-    mockProc._stdout.emit("data", Buffer.from("Plain text output"));
+    // Non-JSON lines are skipped by the NDJSON parser
+    mockProc._stdout.emit("data", Buffer.from("Plain text output\n"));
     mockProc.emit("close", 0, null);
 
     const result = await promise;
-    expect(result.text).toBe("Plain text output");
-    expect(result.raw).toBeUndefined();
+    // With NDJSON parsing, non-JSON lines are skipped — no result event means empty text
+    expect(result.text).toBe("");
+    expect(result.raw).toBeInstanceOf(Array);
     expect(result.exitCode).toBe(0);
   });
 
@@ -280,14 +283,14 @@ describe("spawnClaude", () => {
     expect(args).not.toContain("--resume");
   });
 
-  it("extracts claudeSessionId from init event in output", async () => {
+  it("extracts claudeSessionId from init event in NDJSON output", async () => {
     const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
 
-    const jsonOutput = JSON.stringify([
-      { type: "system", subtype: "init", session_id: "extracted-uuid-456" },
-      { type: "result", result: "Done!" },
-    ]);
-    mockProc._stdout.emit("data", Buffer.from(jsonOutput));
+    const ndjson = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "extracted-uuid-456" }),
+      JSON.stringify({ type: "result", result: "Done!" }),
+    ].join("\n") + "\n";
+    mockProc._stdout.emit("data", Buffer.from(ndjson));
     mockProc.emit("close", 0, null);
 
     const result = await promise;

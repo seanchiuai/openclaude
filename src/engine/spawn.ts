@@ -10,13 +10,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paths } from "../config/paths.js";
-import type { AgentTask, ClaudeResult, ClaudeSession } from "./types.js";
+import type { AgentTask, ClaudeResult, ClaudeSession, OnStreamEvent } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes
 
-export function spawnClaude(task: AgentTask): {
+export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
   session: ClaudeSession;
   promise: Promise<ClaudeResult>;
 } {
@@ -33,7 +33,7 @@ export function spawnClaude(task: AgentTask): {
   const args = [
     "-p", // print mode (non-interactive)
     "--output-format",
-    "json",
+    "stream-json",
   ];
 
   // Add session flags: --resume for continuing, --session-id for new named sessions
@@ -102,10 +102,48 @@ export function spawnClaude(task: AgentTask): {
   };
 
   const promise = new Promise<ClaudeResult>((resolve, reject) => {
-    const chunks: Buffer[] = [];
+    const rawEvents: Record<string, unknown>[] = [];
     const errChunks: Buffer[] = [];
+    let lineBuf = "";
+    let streamSessionId: string | undefined;
 
-    proc.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      lineBuf += chunk.toString("utf-8");
+      const lines = lineBuf.split("\n");
+      // Keep the last (possibly incomplete) line in the buffer
+      lineBuf = lines.pop()!;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const event = JSON.parse(trimmed) as Record<string, unknown>;
+          rawEvents.push(event);
+
+          // Extract session_id eagerly from init event
+          if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
+            streamSessionId = event.session_id;
+          }
+
+          // Stream assistant text events to callback
+          if (event.type === "assistant" && onEvent) {
+            const content = (event as Record<string, unknown>).content as Array<Record<string, unknown>> | undefined
+              ?? ((event as Record<string, unknown>).message as Record<string, unknown> | undefined)?.content as Array<Record<string, unknown>> | undefined;
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === "text" && typeof block.text === "string") {
+                  onEvent({ type: "text", text: block.text });
+                } else if (block.type === "tool_use" && typeof block.name === "string") {
+                  onEvent({ type: "status", message: `[Using tool: ${block.name}]` });
+                }
+              }
+            }
+          }
+        } catch {
+          // Skip non-JSON lines
+        }
+      }
+    });
     proc.stderr?.on("data", (chunk: Buffer) => errChunks.push(chunk));
 
     // Wall-clock timeout with process group kill
@@ -121,8 +159,20 @@ export function spawnClaude(task: AgentTask): {
     proc.on("close", (code, signal) => {
       clearTimeout(timer);
       const duration = Date.now() - startedAt;
-      const stdout = Buffer.concat(chunks).toString("utf-8");
       const stderr = Buffer.concat(errChunks).toString("utf-8");
+
+      // Process any remaining buffered line
+      if (lineBuf.trim()) {
+        try {
+          const event = JSON.parse(lineBuf.trim()) as Record<string, unknown>;
+          rawEvents.push(event);
+          if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
+            streamSessionId = event.session_id;
+          }
+        } catch {
+          // Not JSON
+        }
+      }
 
       if (signal === "SIGTERM" || signal === "SIGKILL") {
         session.status = "killed";
@@ -133,7 +183,28 @@ export function spawnClaude(task: AgentTask): {
       }
 
       const exitCode = code ?? 1;
-      const result = parseClaudeOutput(stdout, stderr, exitCode, duration);
+
+      // Extract result from collected NDJSON events
+      let text = "";
+      const resultEvent = rawEvents.findLast(
+        (e) => e.type === "result",
+      );
+      if (resultEvent && typeof resultEvent.result === "string") {
+        text = resultEvent.result;
+      }
+
+      // Fall back to init session_id if not found in stream
+      const claudeSessionId = streamSessionId ?? (rawEvents.find(
+        (e) => e.type === "system" && e.subtype === "init",
+      )?.session_id as string | undefined);
+
+      const result: ClaudeResult = {
+        text: text.trim(),
+        raw: rawEvents,
+        exitCode,
+        duration,
+        claudeSessionId,
+      };
 
       if (exitCode !== 0) {
         session.status = "failed";

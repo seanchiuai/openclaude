@@ -18,7 +18,9 @@ export type CommandHandler = (
   message: InboundMessage,
 ) => Promise<string>;
 
-export type Router = (message: InboundMessage) => Promise<string>;
+import type { OnStreamEvent } from "../engine/types.js";
+
+export type Router = (message: InboundMessage, onProgress?: OnStreamEvent) => Promise<string>;
 
 export interface ChatSession {
   sessionId: string;        // Internal ID for pool/directory (e.g. "main-abc123")

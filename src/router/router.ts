@@ -13,6 +13,7 @@ import type { ProcessPool } from "../engine/pool.js";
 import type { InboundMessage } from "../channels/types.js";
 import { GATEWAY_COMMANDS, createCommandHandlers } from "./commands.js";
 import type { CommandDeps } from "./commands.js";
+import type { OnStreamEvent } from "../engine/types.js";
 import type { ChatSession, ParsedCommand, Router } from "./types.js";
 import {
   buildSkillCommandSpecs,
@@ -128,7 +129,7 @@ export function createRouter(deps: RouterDeps): Router {
     });
   }
 
-  return async (message: InboundMessage): Promise<string> => {
+  return async (message: InboundMessage, onProgress?: OnStreamEvent): Promise<string> => {
     // 0. /reset needs message context to scope to calling chat
     if (message.text.startsWith("/")) {
       const command = parseCommand(message.text);
@@ -203,7 +204,7 @@ export function createRouter(deps: RouterDeps): Router {
             mcpConfig,
             gatewayUrl,
             gatewayToken,
-          });
+          }, onProgress);
           chatSession.messageCount++;
           chatSession.lastMessageAt = Date.now();
           // Update stored session ID if CLI returned a different one (OpenClaw parity)
@@ -271,7 +272,7 @@ export function createRouter(deps: RouterDeps): Router {
         mcpConfig,
         gatewayUrl,
         gatewayToken,
-      });
+      }, onProgress);
       chatSession.messageCount++;
       chatSession.lastMessageAt = Date.now();
       // Update stored session ID if CLI returned a different one (OpenClaw parity)

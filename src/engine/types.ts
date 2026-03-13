@@ -56,3 +56,10 @@ export interface PoolStats {
   queued: number;
   maxConcurrent: number;
 }
+
+export type StreamEvent =
+  | { type: "text"; text: string }
+  | { type: "status"; message: string }
+  | { type: "queued"; position: number };
+
+export type OnStreamEvent = (event: StreamEvent) => void;

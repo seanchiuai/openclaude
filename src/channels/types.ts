@@ -49,6 +49,7 @@ export interface ChannelAdapter {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendText(chatId: string, text: string): Promise<SendResult>;
+  editMessage?(chatId: string, messageId: string | number, text: string): Promise<void>;
   sendMedia?(
     chatId: string,
     media: MediaAttachment,

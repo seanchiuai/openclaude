@@ -23,6 +23,8 @@ import type { MemoryManager } from "../memory/index.js";
 import type { CronService } from "../cron/index.js";
 import type { HeartbeatRunner } from "../cron/heartbeat.js";
 import type { CronDeliveryTarget } from "../cron/types.js";
+import type { OnStreamEvent } from "../engine/types.js";
+import { createStreamingReply } from "../channels/streaming.js";
 
 export interface Gateway {
   config: OpenClaudeConfig;
@@ -172,7 +174,23 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       "../channels/telegram/index.js"
     );
 
-    const telegram = createTelegramChannel(config.channels.telegram, router);
+    const telegram = createTelegramChannel(config.channels.telegram, async (msg) => {
+      const reply = createStreamingReply({
+        sendText: async (text) => telegram.sendText(msg.chatId, text),
+        editMessage: async (msgId, text) => telegram.editMessage!(msg.chatId, msgId, text),
+      });
+      const onProgress: OnStreamEvent = (event) => {
+        if (event.type === "text") reply.update(event.text);
+        if (event.type === "status") reply.status(event.message);
+        if (event.type === "queued") reply.status(`Waiting in queue (position ${event.position})...`);
+      };
+      const finalText = await router(msg, onProgress);
+      if (!reply.failed()) {
+        await reply.finalize(finalText);
+        return ""; // Suppress withTypingAndReactions sendText (already streamed)
+      }
+      return finalText; // Fallback: withTypingAndReactions sends fresh
+    });
     await telegram.start();
     channels.set("telegram", telegram);
     channelNames.push("telegram");
@@ -183,18 +201,33 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     const { createSlackChannel } = await import("../channels/slack/index.js");
 
     const slack = createSlackChannel(config.channels.slack, async (msg) => {
-      const response = await router({
+      const inbound = {
         channel: msg.channel,
         chatId: msg.chatId,
         userId: msg.userId,
         username: msg.username,
         text: msg.text,
         source: msg.source as "user" | "cron" | "system",
+      };
+      const reply = createStreamingReply({
+        sendText: async (text) => slack.sendText(msg.chatId, text),
+        editMessage: async (msgId, text) => slack.editMessage!(msg.chatId, msgId, text),
       });
-      if (response && msg.chatId) {
-        await slack.sendText(msg.chatId, response);
+      const onProgress: OnStreamEvent = (event) => {
+        if (event.type === "text") reply.update(event.text);
+        if (event.type === "status") reply.status(event.message);
+        if (event.type === "queued") reply.status(`Waiting in queue (position ${event.position})...`);
+      };
+      const finalText = await router(inbound, onProgress);
+      if (!reply.failed()) {
+        await reply.finalize(finalText);
+        return ""; // Already streamed
       }
-      return response;
+      // Fallback: send normally
+      if (finalText && msg.chatId) {
+        await slack.sendText(msg.chatId, finalText);
+      }
+      return finalText;
     });
     await slack.start();
     channels.set("slack", slack);

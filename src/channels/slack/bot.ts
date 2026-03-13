@@ -56,5 +56,12 @@ export function createSlackChannel(
       });
       return { messageId: result.ts as string, success: true };
     },
+    editMessage: async (chatId: string, messageId: string | number, text: string): Promise<void> => {
+      await app.client.chat.update({
+        channel: chatId,
+        ts: String(messageId),
+        text,
+      });
+    },
   };
 }

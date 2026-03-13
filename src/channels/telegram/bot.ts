@@ -278,11 +278,27 @@ export function createTelegramChannel(
     return sendMedia(bot, chatId, media.type, fileRef, caption);
   }
 
+  async function editMessageText(
+    chatId: string,
+    messageId: string | number,
+    text: string,
+  ): Promise<void> {
+    try {
+      await bot.api.editMessageText(chatId, Number(messageId), text, {
+        parse_mode: "Markdown",
+      });
+    } catch {
+      // Retry without parse_mode if Markdown fails
+      await bot.api.editMessageText(chatId, Number(messageId), text);
+    }
+  }
+
   return {
     id: "telegram",
     start,
     stop,
     sendText: sendTextMessage,
+    editMessage: editMessageText,
     sendMedia: sendMediaMessage,
   };
 }
