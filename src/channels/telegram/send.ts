@@ -99,6 +99,29 @@ export function splitTextChunks(text: string, limit = CHUNK_LIMIT): string[] {
   return chunks.filter((c) => c.length > 0);
 }
 
+export async function reactMessage(
+  bot: Bot,
+  chatId: string,
+  messageId: number,
+  emoji: string,
+  opts?: { remove?: boolean },
+): Promise<{ ok: true } | { ok: false; warning: string }> {
+  const reactions = opts?.remove
+    ? []
+    : [{ type: "emoji" as const, emoji: emoji.trim() }];
+
+  try {
+    await bot.api.setMessageReaction(chatId, messageId, reactions);
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("REACTION_INVALID")) {
+      return { ok: false, warning: msg };
+    }
+    throw err;
+  }
+}
+
 function findSplitPoint(text: string, limit: number): number {
   // Try to split at a double newline (paragraph break)
   const doubleNewline = text.lastIndexOf("\n\n", limit);

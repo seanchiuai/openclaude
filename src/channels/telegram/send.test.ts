@@ -15,7 +15,7 @@
  * splitTextChunks(text, limit) splits text respecting boundaries.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { splitTextChunks, sendText, sendMedia } from "./send.js";
+import { splitTextChunks, sendText, sendMedia, reactMessage } from "./send.js";
 
 // --- sendText and sendMedia tests with mock bot ---
 
@@ -136,6 +136,57 @@ describe("sendMedia", () => {
     expect(api.sendVideo).toHaveBeenCalledWith("123", "video_file_id", {
       caption: "video caption",
     });
+  });
+});
+
+describe("reactMessage", () => {
+  it("calls setMessageReaction with emoji", async () => {
+    const bot = {
+      api: {
+        setMessageReaction: vi.fn().mockResolvedValue(true),
+      },
+    } as unknown as Parameters<typeof sendText>[0];
+
+    const result = await reactMessage(bot, "123", 42, "👀");
+    expect(result).toEqual({ ok: true });
+    expect((bot as any).api.setMessageReaction).toHaveBeenCalledWith(
+      "123",
+      42,
+      [{ type: "emoji", emoji: "👀" }],
+    );
+  });
+
+  it("removes reaction when remove=true", async () => {
+    const bot = {
+      api: {
+        setMessageReaction: vi.fn().mockResolvedValue(true),
+      },
+    } as unknown as Parameters<typeof sendText>[0];
+
+    const result = await reactMessage(bot, "123", 42, "👀", { remove: true });
+    expect(result).toEqual({ ok: true });
+    expect((bot as any).api.setMessageReaction).toHaveBeenCalledWith("123", 42, []);
+  });
+
+  it("returns warning on REACTION_INVALID error", async () => {
+    const bot = {
+      api: {
+        setMessageReaction: vi.fn().mockRejectedValue(new Error("REACTION_INVALID")),
+      },
+    } as unknown as Parameters<typeof sendText>[0];
+
+    const result = await reactMessage(bot, "123", 42, "🦄");
+    expect(result).toEqual({ ok: false, warning: expect.stringContaining("REACTION_INVALID") });
+  });
+
+  it("throws on non-REACTION_INVALID errors", async () => {
+    const bot = {
+      api: {
+        setMessageReaction: vi.fn().mockRejectedValue(new Error("network error")),
+      },
+    } as unknown as Parameters<typeof sendText>[0];
+
+    await expect(reactMessage(bot, "123", 42, "👀")).rejects.toThrow("network error");
   });
 });
 
