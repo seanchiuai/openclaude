@@ -2,8 +2,6 @@
 
 Autonomous AI assistant powered by Claude Code CLI. Forked from OpenClaw (different agent runtime). Always use "openclaude" in code/configs — only reference OpenClaw when discussing upstream origin.
 
-**Copy from OpenClaw first.** Source at `openclaw-source/`. Copy and adapt rather than rewrite. Only diverge where Claude Code's engine requires it.
-
 ## Commands
 
 ```bash
@@ -16,6 +14,8 @@ pnpm test       pnpm lint     pnpm format
 - ESM only, `.js` suffix in imports, Zod for validation
 - Functions over classes, `unknown` over `any`, co-located tests (`foo.test.ts`)
 - Errors propagate; catch at boundaries only
+- **Run `pnpm test` after every change.** Do not skip tests or consider work done without a green test run.
+- **Copy from OpenClaw first.** Before writing new code, check if `openclaw-source/` has an existing implementation. Copy it directly and adapt — don't reinvent what already exists upstream. Only diverge where Claude Code's engine requires it.
 
 ## Project Layout
 
