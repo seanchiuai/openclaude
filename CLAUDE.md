@@ -15,6 +15,7 @@ pnpm test       pnpm lint     pnpm format
 - Functions over classes, `unknown` over `any`, co-located tests (`foo.test.ts`)
 - Errors propagate; catch at boundaries only
 - **Run `pnpm test` after every change.** Do not skip tests or consider work done without a green test run.
+- **Commit after every change.** Once tests pass, immediately commit with a descriptive message. Do not batch multiple changes into one commit — each logical change gets its own commit.
 - **Copy from OpenClaw first.** Before writing new code, check if `openclaw-source/` has an existing implementation. Copy it directly and adapt — don't reinvent what already exists upstream. Only diverge where Claude Code's engine requires it.
 
 ## Project Layout
