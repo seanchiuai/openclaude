@@ -9,6 +9,8 @@ export interface AgentTask {
   timeout?: number;
   systemPrompt?: string;
   mcpConfig?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
+  /** Gateway HTTP URL for auto-injected MCP server (e.g. http://localhost:45557) */
+  gatewayUrl?: string;
 }
 
 export type SessionStatus =

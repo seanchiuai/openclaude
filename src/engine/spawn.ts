@@ -7,9 +7,12 @@
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { paths } from "../config/paths.js";
 import type { AgentTask, ClaudeResult, ClaudeSession } from "./types.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes
 
@@ -38,16 +41,32 @@ export function spawnClaude(task: AgentTask): {
     args.push("--system-prompt", task.systemPrompt);
   }
 
-  if (task.mcpConfig && Object.keys(task.mcpConfig).length > 0) {
+  // Build MCP config: merge user-configured servers with auto-injected gateway server.
+  // The gateway server takes precedence on name collision.
+  const gatewayMcp = task.gatewayUrl
+    ? {
+        "openclaude-gateway": {
+          command: "node",
+          args: [join(__dirname, "mcp/gateway-tools-server.js")],
+          env: { GATEWAY_URL: task.gatewayUrl },
+        },
+      }
+    : {};
+  const mergedMcp = { ...(task.mcpConfig ?? {}), ...gatewayMcp };
+
+  if (Object.keys(mergedMcp).length > 0) {
     const mcpConfigPath = join(projectPath, ".mcp.json");
-    const mcpPayload = { mcpServers: task.mcpConfig };
+    const mcpPayload = { mcpServers: mergedMcp };
     writeFileSync(mcpConfigPath, JSON.stringify(mcpPayload), "utf-8");
     args.push("--mcp-config", mcpConfigPath);
   }
 
-  // Build env: inherit process.env but unset CLAUDECODE to avoid nesting issues
+  // Build env: inherit process.env but clean up problematic vars
   const env = { ...process.env };
-  delete env.CLAUDECODE;
+  delete env.CLAUDECODE; // Avoid "nested session" error
+  delete env.ANTHROPIC_API_KEY; // Force OAuth/subscription, never API key auth
+  delete env.CLAUDE_API_KEY; // Same
+  delete env.CLAUDE_CODE_ENTRYPOINT; // Don't inherit parent entrypoint
 
   const startedAt = Date.now();
   const proc = spawn("claude", args, {
@@ -142,8 +161,16 @@ function parseClaudeOutput(
   try {
     const parsed = JSON.parse(stdout);
     raw = parsed;
-    // Claude JSON output has a "result" field with the text
-    if (typeof parsed === "object" && parsed !== null && "result" in parsed) {
+    // Claude --output-format json returns an array of events.
+    // Find the last "result" event and extract the result text.
+    if (Array.isArray(parsed)) {
+      const resultEvent = parsed.findLast(
+        (e: Record<string, unknown>) => e.type === "result",
+      );
+      if (resultEvent && typeof resultEvent.result === "string") {
+        text = resultEvent.result;
+      }
+    } else if (typeof parsed === "object" && parsed !== null && "result" in parsed) {
       text = String(parsed.result);
     }
   } catch {

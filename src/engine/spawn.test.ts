@@ -2,11 +2,11 @@
  * Contract: Claude Code CLI Subprocess Spawning
  *
  * spawnClaude(task) spawns a `claude -p` subprocess with session isolation.
- * - Writes prompt to a file, never passes it as CLI args
- * - Passes --input-file, --output-format json, --dangerously-skip-permissions
+ * - Writes prompt to a file for record-keeping, and pipes it via stdin
+ * - Passes -p, --output-format json (no --input-file, no --dangerously-skip-permissions)
  * - Unsets CLAUDECODE env var to avoid nesting
  * - Spawns with detached:true for process group kill
- * - Parses JSON stdout → ClaudeResult with text, raw, exitCode, duration
+ * - Parses JSON array output → finds last "result" event → ClaudeResult
  * - Handles non-JSON stdout gracefully (uses raw text)
  * - Non-zero exit code → result.exitCode reflects it
  * - Timeout → SIGKILL to process group (negative pid)
@@ -40,17 +40,24 @@ const mockMkdirSync = vi.mocked(mkdirSync);
 function createMockProcess(): ChildProcess & {
   _stdout: EventEmitter;
   _stderr: EventEmitter;
+  _stdinData: string[];
 } {
   const proc = new EventEmitter() as ChildProcess & {
     _stdout: EventEmitter;
     _stderr: EventEmitter;
+    _stdinData: string[];
   };
   proc._stdout = new EventEmitter();
   proc._stderr = new EventEmitter();
+  proc._stdinData = [];
   proc.stdout = proc._stdout as unknown as Readable;
   proc.stderr = proc._stderr as unknown as Readable;
   proc.pid = 12345;
-  proc.stdin = null;
+  // Mock writable stdin
+  proc.stdin = {
+    write: (data: string) => { proc._stdinData.push(data); return true; },
+    end: () => {},
+  } as unknown as ChildProcess["stdin"];
   return proc;
 }
 
@@ -83,18 +90,18 @@ describe("spawnClaude", () => {
     expect(spawnArgs).not.toContain("Hello world");
   });
 
-  it("passes --input-file, --output-format json, --dangerously-skip-permissions", () => {
-    spawnClaude({ sessionId: "s1", prompt: "test" });
+  it("passes -p and --output-format json, pipes prompt via stdin", () => {
+    spawnClaude({ sessionId: "s1", prompt: "test prompt" });
 
     const args = mockSpawn.mock.calls[0][1] as string[];
     expect(args).toContain("-p");
     expect(args).toContain("--output-format");
     expect(args).toContain("json");
-    expect(args).toContain("--input-file");
-    expect(args).toContain("--dangerously-skip-permissions");
-    // --input-file should be followed by the prompt file path
-    const inputFileIdx = args.indexOf("--input-file");
-    expect(args[inputFileIdx + 1]).toContain("prompt.md");
+    // No --input-file (doesn't exist) or --dangerously-skip-permissions (forces API auth)
+    expect(args).not.toContain("--input-file");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+    // Prompt piped via stdin
+    expect(mockProc._stdinData).toContain("test prompt");
   });
 
   it("unsets CLAUDECODE env var", () => {
@@ -106,11 +113,12 @@ describe("spawnClaude", () => {
     delete process.env.CLAUDECODE;
   });
 
-  it("spawns with detached:true for process group", () => {
+  it("spawns with detached:true and pipe stdio", () => {
     spawnClaude({ sessionId: "s1", prompt: "test" });
 
-    const spawnOpts = mockSpawn.mock.calls[0][2] as { detached: boolean };
+    const spawnOpts = mockSpawn.mock.calls[0][2] as { detached: boolean; stdio: string[] };
     expect(spawnOpts.detached).toBe(true);
+    expect(spawnOpts.stdio).toEqual(["pipe", "pipe", "pipe"]);
   });
 
   it("creates project directory for session isolation", () => {
@@ -122,16 +130,20 @@ describe("spawnClaude", () => {
     );
   });
 
-  it("parses JSON output → ClaudeResult", async () => {
+  it("parses JSON array output → extracts result event", async () => {
     const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
 
-    const jsonOutput = JSON.stringify({ result: "Hello from Claude" });
+    const jsonOutput = JSON.stringify([
+      { type: "system", subtype: "init", session_id: "abc" },
+      { type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } },
+      { type: "result", subtype: "success", result: "Hello from Claude", is_error: false },
+    ]);
     mockProc._stdout.emit("data", Buffer.from(jsonOutput));
     mockProc.emit("close", 0, null);
 
     const result = await promise;
     expect(result.text).toBe("Hello from Claude");
-    expect(result.raw).toEqual({ result: "Hello from Claude" });
+    expect(result.raw).toBeInstanceOf(Array);
     expect(result.exitCode).toBe(0);
     expect(result.duration).toBeGreaterThanOrEqual(0);
   });
