@@ -1,104 +1,27 @@
 /**
- * Contract tests for src/memory/memory-flush.ts
+ * Tests for src/memory/memory-flush.ts
  *
- * This module extracts key facts from a session transcript and writes
- * them to a dated markdown file in the memory directory, then triggers a sync.
- *
- * Expected interface:
- *   interface FlushDeps {
- *     memoryDir: string;
- *     syncFn: () => Promise<void>;
- *   }
- *   function flushSessionToMemory(
- *     transcript: string,
- *     deps: FlushDeps,
- *   ): Promise<{ flushed: boolean; path?: string }>
- *
- * The implementation module does not exist yet. These tests define the
- * contract that flushSessionToMemory must satisfy once implemented.
- * Uses real temp directories for file operations.
+ * Tests both:
+ * 1. flushSessionToMemory — writes facts to dated markdown files
+ * 2. shouldFlushMemory — determines when to trigger a flush
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { existsSync } from "node:fs";
+import {
+  flushSessionToMemory,
+  shouldFlushMemory,
+  DEFAULT_CONTEXT_WINDOW,
+  RESERVE_TOKENS_FLOOR,
+  SOFT_THRESHOLD_TOKENS,
+  FLUSH_THRESHOLD_RATIO,
+} from "./memory-flush.js";
+import type { ChatSession } from "../router/types.js";
 
 // ---------------------------------------------------------------------------
-// Types mirroring the contract
-// ---------------------------------------------------------------------------
-interface FlushDeps {
-  memoryDir: string;
-  syncFn: () => Promise<void>;
-}
-
-interface FlushResult {
-  flushed: boolean;
-  path?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Mock implementation — stands in until the real module exists.
-// ---------------------------------------------------------------------------
-
-function todayDateString(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function extractKeyFacts(transcript: string): string[] {
-  // Minimal extraction: split by sentences, keep non-trivial ones.
-  // The real implementation would use an LLM or heuristic NLP.
-  const sentences = transcript
-    .split(/[.!?\n]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 20);
-  return sentences;
-}
-
-async function flushSessionToMemory(
-  transcript: string,
-  deps: FlushDeps,
-): Promise<FlushResult> {
-  const facts = extractKeyFacts(transcript);
-  if (facts.length === 0) {
-    return { flushed: false };
-  }
-
-  await mkdir(deps.memoryDir, { recursive: true });
-
-  const dateStr = todayDateString();
-  const filePath = join(deps.memoryDir, `${dateStr}.md`);
-
-  // Build content to append
-  const factsBlock = facts.map((f) => `- ${f}`).join("\n") + "\n";
-
-  // Append to existing file or create new one
-  let existing = "";
-  try {
-    existing = await readFile(filePath, "utf-8");
-  } catch {
-    // file doesn't exist yet
-  }
-
-  if (existing) {
-    await writeFile(filePath, existing + "\n" + factsBlock);
-  } else {
-    const header = `# Session Notes ${dateStr}\n\n`;
-    await writeFile(filePath, header + factsBlock);
-  }
-
-  await deps.syncFn();
-
-  return { flushed: true, path: filePath };
-}
-
-// ---------------------------------------------------------------------------
-// Tests
+// flushSessionToMemory tests
 // ---------------------------------------------------------------------------
 
 describe("flushSessionToMemory", () => {
@@ -220,5 +143,66 @@ describe("flushSessionToMemory", () => {
     // Original content should still be present (not overwritten)
     expect(contentAfterSecond).toContain("project structure");
     expect(contentAfterSecond).toContain("integration tests");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shouldFlushMemory tests
+// ---------------------------------------------------------------------------
+
+function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
+  return {
+    sessionId: "main-test",
+    claudeSessionId: "uuid-test",
+    lastMessageAt: Date.now(),
+    messageCount: 5,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
+    compactionCount: 0,
+    ...overrides,
+  };
+}
+
+describe("shouldFlushMemory", () => {
+  it("returns false for fresh session with low token count", () => {
+    const session = makeSession({ totalInputTokens: 1000, lastFlushCompactionCount: 0 });
+    expect(shouldFlushMemory(session)).toBe(false);
+  });
+
+  it("returns true when input tokens exceed threshold ratio", () => {
+    const threshold = (DEFAULT_CONTEXT_WINDOW - RESERVE_TOKENS_FLOOR - SOFT_THRESHOLD_TOKENS) * FLUSH_THRESHOLD_RATIO;
+    const session = makeSession({ totalInputTokens: Math.ceil(threshold), lastFlushCompactionCount: 0 });
+    expect(shouldFlushMemory(session)).toBe(true);
+  });
+
+  it("returns false when just below threshold", () => {
+    const threshold = (DEFAULT_CONTEXT_WINDOW - RESERVE_TOKENS_FLOOR - SOFT_THRESHOLD_TOKENS) * FLUSH_THRESHOLD_RATIO;
+    const session = makeSession({ totalInputTokens: Math.floor(threshold) - 1, lastFlushCompactionCount: 0 });
+    expect(shouldFlushMemory(session)).toBe(false);
+  });
+
+  it("returns true when compaction happened but no flush yet", () => {
+    const session = makeSession({ compactionCount: 1 });
+    // lastFlushCompactionCount is undefined (never flushed)
+    expect(shouldFlushMemory(session)).toBe(true);
+  });
+
+  it("returns false when compaction count matches last flush", () => {
+    const session = makeSession({
+      compactionCount: 2,
+      lastFlushCompactionCount: 2,
+      totalInputTokens: 1000,
+    });
+    expect(shouldFlushMemory(session)).toBe(false);
+  });
+
+  it("returns true when new compaction since last flush", () => {
+    const session = makeSession({
+      compactionCount: 3,
+      lastFlushCompactionCount: 2,
+      totalInputTokens: 1000,
+    });
+    expect(shouldFlushMemory(session)).toBe(true);
   });
 });

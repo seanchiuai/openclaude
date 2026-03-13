@@ -13,8 +13,7 @@ import type { ProcessPool } from "../engine/pool.js";
 import type { InboundMessage } from "../channels/types.js";
 import { GATEWAY_COMMANDS, createCommandHandlers } from "./commands.js";
 import type { CommandDeps } from "./commands.js";
-import type { OnStreamEvent } from "../engine/types.js";
-import type { ClaudeResult } from "../engine/types.js";
+import type { OnStreamEvent, ClaudeResult } from "../engine/types.js";
 import type { ChatSession, ParsedCommand, Router } from "./types.js";
 import {
   buildSkillCommandSpecs,
@@ -25,6 +24,7 @@ import type { SkillEntry } from "../skills/loader.js";
 import type { McpServerConfig } from "../config/types.js";
 import { paths } from "../config/paths.js";
 import { buildSystemPrompt } from "../engine/system-prompt.js";
+import { shouldFlushMemory, flushSessionToMemory } from "../memory/memory-flush.js";
 import {
   loadWorkspaceBootstrapFiles,
   buildBootstrapContextFiles,
@@ -299,6 +299,21 @@ export function createRouter(deps: RouterDeps): Router {
     if (!chatSession) {
       chatSession = createChatSession(`main-${randomUUID().slice(0, 8)}`);
       mainSessions.set(sessionKey, chatSession);
+    }
+
+    // Pre-turn memory flush: save durable facts before context compaction loses them
+    if (shouldFlushMemory(chatSession)) {
+      const syncFn = memoryManager ? () => memoryManager.sync() : async () => {};
+      try {
+        await flushSessionToMemory(
+          `Session ${chatSession.sessionId} has used ${chatSession.totalInputTokens} input tokens. Compaction count: ${chatSession.compactionCount}.`,
+          { memoryDir: paths.memory, syncFn },
+        );
+        chatSession.lastFlushCompactionCount = chatSession.compactionCount;
+        saveSessionMap(mainSessions);
+      } catch {
+        // Memory flush is best-effort; don't block the user message
+      }
     }
 
     const isResume = chatSession.messageCount > 0;
