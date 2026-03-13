@@ -168,7 +168,7 @@ describe("createRouter", () => {
   it("skill trigger routes to engine with skill reference as prompt", async () => {
     const skills = [
       {
-        name: "daily-standup",
+        name: "standup",
         description: "Daily standup",
         triggers: ["/standup"],
         body: "Review my recent git commits.",
@@ -181,15 +181,15 @@ describe("createRouter", () => {
 
     expect(pool.submit).toHaveBeenCalledOnce();
     const submitArg = pool.submit.mock.calls[0][0];
-    // Prompt now references the skill name (body injected via system prompt)
-    expect(submitArg.prompt).toContain("daily-standup");
+    // Prompt references skill name (body injected via system prompt skills section)
+    expect(submitArg.prompt).toContain("standup");
     expect(result).toBe("engine response");
   });
 
   it("skill trigger with args includes user input in prompt", async () => {
     const skills = [
       {
-        name: "daily-standup",
+        name: "standup",
         description: "Daily standup",
         triggers: ["/standup"],
         body: "Review my recent git commits.",
@@ -201,7 +201,7 @@ describe("createRouter", () => {
     await router(makeMessage({ text: "/standup for last week" }));
 
     const submitArg = pool.submit.mock.calls[0][0];
-    expect(submitArg.prompt).toContain("daily-standup");
+    expect(submitArg.prompt).toContain("standup");
     expect(submitArg.prompt).toContain("for last week");
   });
 

@@ -88,12 +88,16 @@ describe("matchSkillCommand", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildSkillCommandSpecs", () => {
-  it("builds specs from skills with sanitised names", () => {
+  it("builds specs from skills with sanitised names (including trigger aliases)", () => {
     const specs = buildSkillCommandSpecs(sampleSkills);
-    expect(specs).toHaveLength(2);
+    // github → name "github" + trigger "gh" = 2, deploy → name "deploy" + trigger "ship" = 2
+    expect(specs).toHaveLength(4);
     expect(specs[0]!.name).toBe("github");
     expect(specs[0]!.skillName).toBe("github");
-    expect(specs[1]!.name).toBe("deploy");
+    expect(specs[1]!.name).toBe("gh");
+    expect(specs[1]!.skillName).toBe("github");
+    expect(specs[2]!.name).toBe("deploy");
+    expect(specs[3]!.name).toBe("ship");
   });
 
   it("filters out non-user-invocable skills", () => {
@@ -108,7 +112,8 @@ describe("buildSkillCommandSpecs", () => {
       ...sampleSkills,
     ];
     const specs = buildSkillCommandSpecs(skills);
-    expect(specs).toHaveLength(2);
+    // 4 from sampleSkills, 0 from internal-only
+    expect(specs).toHaveLength(4);
     expect(specs.find((s) => s.skillName === "internal-only")).toBeUndefined();
   });
 
