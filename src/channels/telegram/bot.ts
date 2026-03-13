@@ -8,6 +8,7 @@
 import { Bot } from "grammy";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { sendText, sendMedia } from "./send.js";
+import { startTyping } from "./typing.js";
 import type {
   ChannelAdapter,
   InboundMessage,
@@ -60,9 +61,16 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    const response = await onMessage(message);
-    if (response) {
-      await sendText(bot, String(ctx.chat.id), response);
+    const typing = startTyping(bot, String(ctx.chat.id));
+    try {
+      const response = await onMessage(message);
+      typing.stop();
+      if (response) {
+        await sendText(bot, String(ctx.chat.id), response);
+      }
+    } catch (err) {
+      typing.stop();
+      throw err;
     }
   });
 
@@ -91,9 +99,16 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    const response = await onMessage(message);
-    if (response) {
-      await sendText(bot, String(ctx.chat.id), response);
+    const typing = startTyping(bot, String(ctx.chat.id));
+    try {
+      const response = await onMessage(message);
+      typing.stop();
+      if (response) {
+        await sendText(bot, String(ctx.chat.id), response);
+      }
+    } catch (err) {
+      typing.stop();
+      throw err;
     }
   });
 
@@ -123,9 +138,16 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    const response = await onMessage(message);
-    if (response) {
-      await sendText(bot, String(ctx.chat.id), response);
+    const typing = startTyping(bot, String(ctx.chat.id));
+    try {
+      const response = await onMessage(message);
+      typing.stop();
+      if (response) {
+        await sendText(bot, String(ctx.chat.id), response);
+      }
+    } catch (err) {
+      typing.stop();
+      throw err;
     }
   });
 

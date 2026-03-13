@@ -5,7 +5,7 @@ vi.mock("grammy", () => {
   const handlers = new Map();
   return {
     Bot: vi.fn().mockImplementation(() => ({
-      api: { config: { use: vi.fn() }, sendMessage: vi.fn() },
+      api: { config: { use: vi.fn() }, sendMessage: vi.fn(), sendChatAction: vi.fn().mockResolvedValue(true) },
       on: vi.fn((event: string, handler: unknown) =>
         handlers.set(event, handler),
       ),
