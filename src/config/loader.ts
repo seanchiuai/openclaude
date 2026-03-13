@@ -25,6 +25,14 @@ const DEFAULT_CONFIG: OpenClaudeConfig = {
   memory: {
     dbPath: paths.memoryDb,
   },
+  cron: {
+    enabled: false,
+    storePath: "~/.openclaude/cron/jobs.json",
+  },
+  gateway: {
+    port: 45557,
+    auth: { mode: "none" },
+  },
 };
 
 export function loadConfig(configPath?: string): OpenClaudeConfig {

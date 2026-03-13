@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCronService } from "./service.js";
-import type { CronJob, CronRunOutcome, CronDeliveryTarget } from "./types.js";
+import { saveCronStore } from "./store.js";
+import type { CronJob, CronRunOutcome, CronDeliveryTarget, CronStore } from "./types.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "cron-test-"));
@@ -380,5 +381,115 @@ describe("CronService", () => {
     svc.stop();
 
     expect(svc.status().running).toBe(false);
+  });
+
+  // ---------- stuck job recovery ----------
+
+  it("clears stuck job on start() (stuck > 2h)", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Pre-populate store with a job that has been "running" for 3 hours
+    const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
+    const store: CronStore = {
+      version: 1,
+      jobs: [
+        {
+          id: "stuck-job",
+          name: "stuck",
+          schedule: { kind: "every", everyMs: 60_000 },
+          prompt: "stuck prompt",
+          sessionTarget: "isolated",
+          enabled: true,
+          createdAt: threeHoursAgo,
+          updatedAt: threeHoursAgo,
+          state: {
+            runningAtMs: threeHoursAgo,
+          },
+        },
+      ],
+    };
+    saveCronStore(storePath, store);
+
+    const svc = createCronService({
+      storePath,
+      runIsolatedJob: vi.fn(),
+    });
+    svc.start();
+
+    const job = svc.getJob("stuck-job");
+    expect(job?.state.runningAtMs).toBeUndefined();
+    expect(job?.state.lastStatus).toBe("error");
+    expect(job?.state.lastError).toContain("stuck");
+    expect(job?.state.consecutiveErrors).toBe(1);
+
+    svc.stop();
+    errorSpy.mockRestore();
+  });
+
+  it("does NOT clear job running < 2h", () => {
+    // Pre-populate store with a job that has been "running" for 1 hour
+    const oneHourAgo = Date.now() - 1 * 60 * 60 * 1000;
+    const store: CronStore = {
+      version: 1,
+      jobs: [
+        {
+          id: "running-job",
+          name: "running",
+          schedule: { kind: "every", everyMs: 60_000 },
+          prompt: "running prompt",
+          sessionTarget: "isolated",
+          enabled: true,
+          createdAt: oneHourAgo,
+          updatedAt: oneHourAgo,
+          state: {
+            runningAtMs: oneHourAgo,
+          },
+        },
+      ],
+    };
+    saveCronStore(storePath, store);
+
+    const svc = createCronService({
+      storePath,
+      runIsolatedJob: vi.fn(),
+    });
+    svc.start();
+
+    const job = svc.getJob("running-job");
+    expect(job?.state.runningAtMs).toBe(oneHourAgo);
+
+    svc.stop();
+  });
+
+  it("does NOT affect jobs with no runningAtMs", () => {
+    const store: CronStore = {
+      version: 1,
+      jobs: [
+        {
+          id: "idle-job",
+          name: "idle",
+          schedule: { kind: "every", everyMs: 60_000 },
+          prompt: "idle prompt",
+          sessionTarget: "isolated",
+          enabled: true,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          state: {},
+        },
+      ],
+    };
+    saveCronStore(storePath, store);
+
+    const svc = createCronService({
+      storePath,
+      runIsolatedJob: vi.fn(),
+    });
+    svc.start();
+
+    const job = svc.getJob("idle-job");
+    expect(job?.state.runningAtMs).toBeUndefined();
+    expect(job?.state.lastStatus).toBeUndefined();
+
+    svc.stop();
   });
 });

@@ -15,6 +15,8 @@ export interface AgentTask {
   claudeSessionId?: string;
   /** If true, resume an existing session instead of creating a new one */
   resumeSession?: boolean;
+  /** Gateway Bearer token for authenticated MCP gateway calls */
+  gatewayToken?: string;
 }
 
 export type SessionStatus =

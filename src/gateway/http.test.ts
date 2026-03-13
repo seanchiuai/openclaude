@@ -103,6 +103,16 @@ describe("createGatewayApp", () => {
     expect(response.status).toBe(404);
   });
 
+  it("returns 413 for oversized request body", async () => {
+    const response = await app.request("/api/status", {
+      method: "GET",
+      headers: { "Content-Length": "2000000" },
+    });
+    expect(response.status).toBe(413);
+    const body = await response.json();
+    expect(body.error).toContain("Payload too large");
+  });
+
   it("pool stats are reflected in responses", async () => {
     const mockPool = ctx.pool as unknown as ReturnType<typeof createMockPool>;
     mockPool.stats.mockReturnValue({ running: 3, queued: 2, maxConcurrent: 4 });

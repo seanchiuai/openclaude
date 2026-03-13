@@ -10,6 +10,7 @@ import { computeNextRunAtMs } from "./schedule.js";
 
 const MAX_TIMER_DELAY_MS = 60_000;
 const MIN_REFIRE_GAP_MS = 2_000;
+const STUCK_RUN_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 export interface CronServiceDeps {
   storePath: string;
@@ -79,6 +80,18 @@ export function createCronService(deps: CronServiceDeps): CronService {
     try {
       store = loadCronStore(deps.storePath);
       const now = Date.now();
+
+      // Clear stuck jobs on each tick
+      for (const job of store.jobs) {
+        if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
+          console.error(`[cron] Clearing stuck job "${job.name}"`);
+          job.state.runningAtMs = undefined;
+          job.state.lastStatus = "error";
+          job.state.lastError = "Cleared: stuck for over 2 hours";
+          job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
+          save();
+        }
+      }
 
       const dueJobs = store.jobs.filter(
         (j) =>
@@ -161,6 +174,17 @@ export function createCronService(deps: CronServiceDeps): CronService {
       running = true;
       store = loadCronStore(deps.storePath);
       const now = Date.now();
+
+      // Clear stuck jobs (e.g. from a previous crash)
+      for (const job of store.jobs) {
+        if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
+          console.error(`[cron] Clearing stuck job "${job.name}"`);
+          job.state.runningAtMs = undefined;
+          job.state.lastStatus = "error";
+          job.state.lastError = "Cleared: stuck for over 2 hours";
+          job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
+        }
+      }
 
       for (const job of store.jobs) {
         if (job.enabled) {

@@ -59,6 +59,21 @@ export const CronSchema = z.object({
   storePath: z.string().default("~/.openclaude/cron/jobs.json"),
 });
 
+export const GatewayAuthSchema = z.object({
+  mode: z.enum(["none", "token"]).default("none"),
+  token: z.string().optional(),
+  rateLimit: z.object({
+    maxAttempts: z.number().int().min(1).default(10),
+    windowMs: z.number().int().min(1000).default(60_000),
+    lockoutMs: z.number().int().min(1000).default(300_000),
+  }).optional(),
+});
+
+export const GatewaySchema = z.object({
+  port: z.number().int().default(45557),
+  auth: GatewayAuthSchema.default({}),
+});
+
 export const OpenClaudeConfigSchema = z.object({
   channels: ChannelsSchema.default({}),
   agent: AgentSchema.default({}),
@@ -66,6 +81,7 @@ export const OpenClaudeConfigSchema = z.object({
   mcp: z.record(McpServerSchema).default({}),
   memory: MemorySchema.default({}),
   cron: CronSchema.default({}),
+  gateway: GatewaySchema.default({}),
 });
 
 export type ValidatedConfig = z.infer<typeof OpenClaudeConfigSchema>;

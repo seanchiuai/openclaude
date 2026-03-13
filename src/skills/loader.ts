@@ -15,6 +15,8 @@ export interface SkillEntry {
   invocation: SkillInvocationPolicy;
 }
 
+const MAX_SKILL_FILE_BYTES = 256 * 1024;
+
 function findSkillFiles(dir: string): string[] {
   const results: string[] = [];
   let entries: string[];
@@ -29,6 +31,10 @@ function findSkillFiles(dir: string): string[] {
     if (stat.isDirectory()) {
       results.push(...findSkillFiles(full));
     } else if (entry === "SKILL.md") {
+      if (stat.size > MAX_SKILL_FILE_BYTES) {
+        console.warn(`Skipping oversized skill file (${stat.size} bytes): ${full}`);
+        continue;
+      }
       results.push(full);
     }
   }

@@ -155,6 +155,15 @@ vi.mock("../cron/heartbeat.js", () => ({
     mockCreateHeartbeatRunner(...args),
 }));
 
+const mockAuthMiddleware = vi.fn(async (_c: unknown, next: () => Promise<void>) => { await next(); });
+vi.mock("../gateway/auth.js", () => ({
+  createAuthMiddleware: () => ({ middleware: mockAuthMiddleware }),
+}));
+
+vi.mock("../engine/session-cleanup.js", () => ({
+  sweepStaleSessions: () => ({ removed: [], errors: [] }),
+}));
+
 function minimalConfig() {
   return {
     agent: { maxConcurrent: 4, defaultTimeout: 300_000 },
@@ -163,6 +172,7 @@ function minimalConfig() {
     mcp: {},
     memory: { dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
     cron: { enabled: false, storePath: "/tmp/test-openclaude/cron/jobs.json" },
+    gateway: { port: 45557, auth: { mode: "none" as const } },
   };
 }
 
@@ -176,6 +186,7 @@ function telegramConfig() {
     mcp: {},
     memory: { dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
     cron: { enabled: false, storePath: "/tmp/test-openclaude/cron/jobs.json" },
+    gateway: { port: 45557, auth: { mode: "none" as const } },
   };
 }
 

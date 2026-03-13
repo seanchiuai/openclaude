@@ -74,10 +74,27 @@ export interface GatewayContext {
   cronService?: CronService;
   memoryManager?: MemoryManager;
   channelAdapters?: Map<string, ChannelAdapter>;
+  authMiddleware?: (c: import("hono").Context, next: import("hono").Next) => Promise<Response | void>;
 }
+
+const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 export function createGatewayApp(ctx: GatewayContext) {
   const app = new Hono();
+
+  // Body size limit for API routes
+  app.use("/api/*", async (c, next) => {
+    const cl = c.req.header("content-length");
+    if (cl && parseInt(cl, 10) > MAX_BODY_BYTES) {
+      return c.json({ error: "Payload too large" }, 413);
+    }
+    await next();
+  });
+
+  // Auth middleware for API routes
+  if (ctx.authMiddleware) {
+    app.use("/api/*", ctx.authMiddleware);
+  }
 
   // Liveness probe
   app.get("/health", (c) =>

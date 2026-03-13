@@ -56,6 +56,21 @@ export interface CronConfig {
   storePath: string;
 }
 
+export interface GatewayAuthConfig {
+  mode: "none" | "token";
+  token?: string;
+  rateLimit?: {
+    maxAttempts: number;
+    windowMs: number;
+    lockoutMs: number;
+  };
+}
+
+export interface GatewayConfig {
+  port: number;
+  auth: GatewayAuthConfig;
+}
+
 export interface OpenClaudeConfig {
   channels: ChannelsConfig;
   agent: AgentConfig;
@@ -63,4 +78,5 @@ export interface OpenClaudeConfig {
   mcp: Record<string, McpServerConfig>;
   memory: MemoryConfig;
   cron: CronConfig;
+  gateway: GatewayConfig;
 }

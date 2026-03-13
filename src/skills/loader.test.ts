@@ -25,6 +25,8 @@ vi.mock("./loader.js", () => {
   const fs = require("node:fs");
   const path = require("node:path");
 
+  const MAX_SKILL_FILE_BYTES = 256 * 1024;
+
   function findSkillFiles(dir: string): string[] {
     const results: string[] = [];
     let entries: string[];
@@ -39,6 +41,10 @@ vi.mock("./loader.js", () => {
       if (stat.isDirectory()) {
         results.push(...findSkillFiles(full));
       } else if (entry === "SKILL.md") {
+        if (stat.size > MAX_SKILL_FILE_BYTES) {
+          console.warn(`Skipping oversized skill file (${stat.size} bytes): ${full}`);
+          continue;
+        }
         results.push(full);
       }
     }
@@ -319,5 +325,26 @@ Internal only.`,
       userInvocable: false,
       disableModelInvocation: true,
     });
+  });
+
+  it("skips oversized SKILL.md files with warning", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Create a file larger than 256 KB
+    const bigContent = `---
+name: big-skill
+description: A very large skill
+---
+${"x".repeat(257 * 1024)}`;
+    writeFileSync(join(tempDir, "SKILL.md"), bigContent);
+
+    const skills = await loadSkills(tempDir);
+
+    expect(skills).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("oversized"),
+    );
+
+    warnSpy.mockRestore();
   });
 });

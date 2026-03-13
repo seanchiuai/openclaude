@@ -34,6 +34,8 @@ vi.mock("../config/paths.js", () => ({
     base: "/tmp/test-openclaude",
     memoryDb: "/tmp/test-openclaude/memory/openclaude.sqlite",
     heartbeat: "/tmp/test-openclaude/HEARTBEAT.md",
+    sessions: "/tmp/test-openclaude/sessions",
+    skills: "/tmp/test-openclaude/skills",
   },
 }));
 
@@ -140,6 +142,15 @@ vi.mock("../cron/heartbeat.js", () => ({
     mockCreateHeartbeatRunner(...args),
 }));
 
+const mockAuthMiddleware = vi.fn(async (_c: unknown, next: () => Promise<void>) => { await next(); });
+vi.mock("./auth.js", () => ({
+  createAuthMiddleware: () => ({ middleware: mockAuthMiddleware }),
+}));
+
+vi.mock("../engine/session-cleanup.js", () => ({
+  sweepStaleSessions: () => ({ removed: [], errors: [] }),
+}));
+
 // Minimal config with no channels enabled
 function minimalConfig() {
   return {
@@ -147,6 +158,7 @@ function minimalConfig() {
     channels: {},
     heartbeat: { enabled: false, every: 1_800_000 },
     cron: { enabled: false, storePath: "/tmp/test-cron/jobs.json" },
+    gateway: { port: 45557, auth: { mode: "none" as const } },
   };
 }
 
@@ -159,6 +171,7 @@ function telegramConfig() {
     },
     heartbeat: { enabled: false, every: 1_800_000 },
     cron: { enabled: false, storePath: "/tmp/test-cron/jobs.json" },
+    gateway: { port: 45557, auth: { mode: "none" as const } },
   };
 }
 
@@ -304,6 +317,7 @@ describe("shutdown", () => {
       channels: {},
       heartbeat: { enabled: true, every: 1_800_000, checklistPath: "/tmp/test-openclaude/HEARTBEAT.md" },
       cron: { enabled: true, storePath: "/tmp/test-cron/jobs.json" },
+      gateway: { port: 45557, auth: { mode: "none" as const } },
     };
     mockLoadConfig.mockReturnValue(config);
 

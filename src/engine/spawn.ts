@@ -50,12 +50,16 @@ export function spawnClaude(task: AgentTask): {
 
   // Build MCP config: merge user-configured servers with auto-injected gateway server.
   // The gateway server takes precedence on name collision.
+  const gatewayMcpEnv: Record<string, string> = {};
+  if (task.gatewayUrl) gatewayMcpEnv.GATEWAY_URL = task.gatewayUrl;
+  if (task.gatewayToken) gatewayMcpEnv.GATEWAY_TOKEN = task.gatewayToken;
+
   const gatewayMcp = task.gatewayUrl
     ? {
         "openclaude-gateway": {
           command: "node",
           args: [join(__dirname, "../mcp/gateway-tools-server.js")],
-          env: { GATEWAY_URL: task.gatewayUrl },
+          env: gatewayMcpEnv,
         },
       }
     : {};

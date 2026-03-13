@@ -54,6 +54,7 @@ export interface RouterDeps extends CommandDeps {
   skills?: SkillEntry[];
   mcpConfig?: Record<string, McpServerConfig>;
   gatewayUrl?: string;
+  gatewayToken?: string;
 }
 
 export function createRouter(deps: RouterDeps): Router {
@@ -67,6 +68,7 @@ export function createRouter(deps: RouterDeps): Router {
   const memoryManager = deps.memoryManager;
   const mcpConfig = deps.mcpConfig;
   const gatewayUrl = deps.gatewayUrl;
+  const gatewayToken = deps.gatewayToken;
 
   // Build command specs from loaded skills (matches OpenClaw's buildWorkspaceSkillCommandSpecs)
   const skillCommands: SkillCommandSpec[] = buildSkillCommandSpecs(
@@ -200,6 +202,7 @@ export function createRouter(deps: RouterDeps): Router {
             resumeSession: isResume,
             mcpConfig,
             gatewayUrl,
+            gatewayToken,
           });
           chatSession.messageCount++;
           chatSession.lastMessageAt = Date.now();
@@ -226,6 +229,7 @@ export function createRouter(deps: RouterDeps): Router {
           timeout: 300_000,
           mcpConfig,
           gatewayUrl,
+          gatewayToken,
         });
         return result.text;
       } catch (err) {
@@ -262,6 +266,7 @@ export function createRouter(deps: RouterDeps): Router {
         resumeSession: isResume,
         mcpConfig,
         gatewayUrl,
+        gatewayToken,
       });
       chatSession.messageCount++;
       chatSession.lastMessageAt = Date.now();

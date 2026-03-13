@@ -7,8 +7,10 @@ import { paths } from "../config/paths.js";
 import { ensureDirectories, loadConfig } from "../config/loader.js";
 import { createProcessPool } from "../engine/pool.js";
 import { createGatewayApp, startHttpServer } from "./http.js";
+import { createAuthMiddleware } from "./auth.js";
 import { createRouter } from "../router/index.js";
 import { loadSkills } from "../skills/index.js";
+import { sweepStaleSessions } from "../engine/session-cleanup.js";
 import { createMemoryManager } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
@@ -28,8 +30,6 @@ export interface Gateway {
   cronService?: CronService;
   shutdown: () => Promise<void>;
 }
-
-const DEFAULT_PORT = 45557;
 
 export async function startGateway(configPath?: string): Promise<Gateway> {
   ensureDirectories();
@@ -58,7 +58,19 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     }
   };
 
-  const gatewayUrl = `http://localhost:${DEFAULT_PORT}`;
+  const gatewayPort = config.gateway.port;
+  const gatewayUrl = `http://localhost:${gatewayPort}`;
+
+  // Resolve gateway token for auth
+  const gatewayToken = config.gateway.auth.mode === "token"
+    ? (config.gateway.auth.token ?? process.env.OPENCLAUDE_GATEWAY_TOKEN)
+    : undefined;
+
+  // Sweep stale session directories on startup
+  const sweepResult = sweepStaleSessions(paths.sessions);
+  if (sweepResult.removed.length > 0) {
+    console.error(`[gateway] Cleaned ${sweepResult.removed.length} stale session(s)`);
+  }
 
   // Cron service
   let cronService: CronService | undefined;
@@ -74,6 +86,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
             timeout: 300_000,
             mcpConfig: config.mcp,
             gatewayUrl,
+            gatewayToken,
           });
           return { status: "ok" as const, summary: result.text };
         } catch (err) {
@@ -106,6 +119,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
               timeout: 300_000,
               mcpConfig: config.mcp,
               gatewayUrl,
+              gatewayToken,
             });
             return { status: "ok" as const, summary: result.text };
           } catch (err) {
@@ -126,7 +140,10 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   }
 
   // Router returns response text — the channel bot sends it back directly
-  const router = createRouter({ pool, memoryManager, cronService, skills, mcpConfig: config.mcp, gatewayUrl });
+  const router = createRouter({ pool, memoryManager, cronService, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
+
+  // Create auth middleware
+  const authResult = createAuthMiddleware(config.gateway.auth);
 
   // Start HTTP server
   const app = createGatewayApp({
@@ -136,8 +153,9 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     cronService,
     memoryManager,
     channelAdapters: channels,
+    authMiddleware: authResult.middleware,
   });
-  const server = startHttpServer(app, DEFAULT_PORT);
+  const server = startHttpServer(app, gatewayPort);
 
   // Start Telegram if configured
   if (config.channels.telegram?.enabled) {
@@ -178,7 +196,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   // Write PID file
   writePidFile();
 
-  console.error(`[gateway] Started on port ${DEFAULT_PORT}`);
+  console.error(`[gateway] Started on port ${gatewayPort}`);
   if (channelNames.length > 0) {
     console.error(`[gateway] Channels: ${channelNames.join(", ")}`);
   }

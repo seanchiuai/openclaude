@@ -15,6 +15,8 @@ if (!GATEWAY_URL) {
   process.exit(1);
 }
 
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
+
 type McpToolResult = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -22,9 +24,13 @@ type McpToolResult = {
 
 async function callGateway(path: string, body: unknown): Promise<McpToolResult> {
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (GATEWAY_TOKEN) {
+      headers["Authorization"] = `Bearer ${GATEWAY_TOKEN}`;
+    }
     const res = await fetch(`${GATEWAY_URL}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
     const text = await res.text();
