@@ -130,6 +130,20 @@ server.tool(
   (params) => callGateway("/api/memory/get", params),
 );
 
+// --- Logs tool ---
+
+server.tool(
+  "logs_tail",
+  "Read recent gateway log lines. Returns JSON log entries with cursor-based pagination for follow-up reads.",
+  {
+    cursor: z.number().int().min(0).optional().describe("Byte offset to resume reading from (returned by previous call)"),
+    limit: z.number().int().min(1).max(5000).optional().describe("Max number of lines to return (default: 500)"),
+    maxBytes: z.number().int().min(1).max(1_000_000).optional().describe("Max bytes to read (default: 250KB)"),
+    level: z.enum(["error", "warn", "info", "debug"]).optional().describe("Filter by minimum log level"),
+  },
+  (params) => callGateway("/api/logs/tail", params),
+);
+
 // --- Send tool ---
 
 server.tool(

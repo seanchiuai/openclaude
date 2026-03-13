@@ -6,6 +6,8 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { z } from "zod";
+import { open, stat } from "node:fs/promises";
+import { paths } from "../config/paths.js";
 import type { ProcessPool } from "../engine/pool.js";
 import type { CronService } from "../cron/index.js";
 import type { MemoryManager } from "../memory/index.js";
@@ -67,6 +69,13 @@ const SendBody = z.object({
   text: z.string(),
 });
 
+const LogsTailBody = z.object({
+  cursor: z.number().int().min(0).optional(),
+  limit: z.number().int().min(1).max(5000).optional(),
+  maxBytes: z.number().int().min(1).max(1_000_000).optional(),
+  level: z.enum(["error", "warn", "info", "debug"]).optional(),
+});
+
 export interface GatewayContext {
   pool: ProcessPool;
   startedAt: number;
@@ -75,6 +84,102 @@ export interface GatewayContext {
   memoryManager?: MemoryManager;
   channelAdapters?: Map<string, ChannelAdapter>;
   authMiddleware?: (c: import("hono").Context, next: import("hono").Next) => Promise<Response | void>;
+}
+
+const DEFAULT_LOG_LIMIT = 500;
+const DEFAULT_LOG_MAX_BYTES = 250_000;
+const MAX_LOG_LIMIT = 5000;
+const MAX_LOG_BYTES = 1_000_000;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function readLogSlice(params: {
+  file: string;
+  cursor?: number;
+  limit: number;
+  maxBytes: number;
+}): Promise<{
+  file: string;
+  cursor: number;
+  size: number;
+  lines: string[];
+  truncated: boolean;
+  reset: boolean;
+}> {
+  const fileStat = await stat(params.file).catch(() => null);
+  if (!fileStat) {
+    return { file: params.file, cursor: 0, size: 0, lines: [], truncated: false, reset: false };
+  }
+
+  const size = fileStat.size;
+  const maxBytes = clamp(params.maxBytes, 1, MAX_LOG_BYTES);
+  const limit = clamp(params.limit, 1, MAX_LOG_LIMIT);
+  let cursor = typeof params.cursor === "number" && Number.isFinite(params.cursor)
+    ? Math.max(0, Math.floor(params.cursor))
+    : undefined;
+  let reset = false;
+  let truncated = false;
+  let start = 0;
+
+  if (cursor != null) {
+    if (cursor > size) {
+      // Log was likely rotated/truncated — reset to tail
+      reset = true;
+      start = Math.max(0, size - maxBytes);
+      truncated = start > 0;
+    } else {
+      start = cursor;
+      if (size - start > maxBytes) {
+        reset = true;
+        truncated = true;
+        start = Math.max(0, size - maxBytes);
+      }
+    }
+  } else {
+    // No cursor: read from tail
+    start = Math.max(0, size - maxBytes);
+    truncated = start > 0;
+  }
+
+  if (size === 0 || size <= start) {
+    return { file: params.file, cursor: size, size, lines: [], truncated, reset };
+  }
+
+  const handle = await open(params.file, "r");
+  try {
+    // If starting mid-file, check if we're at a line boundary
+    let prefix = "";
+    if (start > 0) {
+      const prefixBuf = Buffer.alloc(1);
+      const prefixRead = await handle.read(prefixBuf, 0, 1, start - 1);
+      prefix = prefixBuf.toString("utf8", 0, prefixRead.bytesRead);
+    }
+
+    const length = Math.max(0, size - start);
+    const buffer = Buffer.alloc(length);
+    const readResult = await handle.read(buffer, 0, length, start);
+    const text = buffer.toString("utf8", 0, readResult.bytesRead);
+    let lines = text.split("\n");
+
+    // Drop partial first line if we started mid-line
+    if (start > 0 && prefix !== "\n") {
+      lines = lines.slice(1);
+    }
+    // Drop trailing empty line from final newline
+    if (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines = lines.slice(0, -1);
+    }
+    // Keep only the last `limit` lines
+    if (lines.length > limit) {
+      lines = lines.slice(lines.length - limit);
+    }
+
+    return { file: params.file, cursor: size, size, lines, truncated, reset };
+  } finally {
+    await handle.close();
+  }
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -213,6 +318,89 @@ export function createGatewayApp(ctx: GatewayContext) {
     try {
       const result = await adapter.sendText(parsed.data.chatId, parsed.data.text);
       return c.json({ ok: true, messageId: result.messageId });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  });
+
+  // --- Logs API ---
+
+  app.get("/api/logs/tail", async (c) => {
+    const cursor = c.req.query("cursor");
+    const limit = c.req.query("limit");
+    const maxBytes = c.req.query("maxBytes");
+    const level = c.req.query("level");
+
+    const parsed = LogsTailBody.safeParse({
+      cursor: cursor != null ? Number(cursor) : undefined,
+      limit: limit != null ? Number(limit) : undefined,
+      maxBytes: maxBytes != null ? Number(maxBytes) : undefined,
+      level: level || undefined,
+    });
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+    }
+
+    const p = parsed.data;
+    try {
+      const result = await readLogSlice({
+        file: paths.logFile,
+        cursor: p.cursor,
+        limit: p.limit ?? DEFAULT_LOG_LIMIT,
+        maxBytes: p.maxBytes ?? DEFAULT_LOG_MAX_BYTES,
+      });
+
+      // Optional level filtering — applied after reading
+      if (p.level) {
+        const levelPriority: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+        const threshold = levelPriority[p.level] ?? 3;
+        result.lines = result.lines.filter((line) => {
+          // Try to parse as JSON log line and check level
+          try {
+            const entry = JSON.parse(line);
+            const entryLevel = (entry.level ?? "info").toLowerCase();
+            return (levelPriority[entryLevel] ?? 3) <= threshold;
+          } catch {
+            // Non-JSON lines pass through (e.g. stderr captures)
+            return true;
+          }
+        });
+      }
+
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  });
+
+  app.post("/api/logs/tail", async (c) => {
+    const parsed = await parseBody(LogsTailBody)(c);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const p = parsed.data;
+    try {
+      const result = await readLogSlice({
+        file: paths.logFile,
+        cursor: p.cursor,
+        limit: p.limit ?? DEFAULT_LOG_LIMIT,
+        maxBytes: p.maxBytes ?? DEFAULT_LOG_MAX_BYTES,
+      });
+
+      if (p.level) {
+        const levelPriority: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+        const threshold = levelPriority[p.level] ?? 3;
+        result.lines = result.lines.filter((line) => {
+          try {
+            const entry = JSON.parse(line);
+            const entryLevel = (entry.level ?? "info").toLowerCase();
+            return (levelPriority[entryLevel] ?? 3) <= threshold;
+          } catch {
+            return true;
+          }
+        });
+      }
+
+      return c.json({ ok: true, ...result });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
