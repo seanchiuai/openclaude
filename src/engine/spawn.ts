@@ -20,7 +20,7 @@ export function spawnClaude(task: AgentTask): {
   const projectPath = join(paths.sessions, task.sessionId);
   mkdirSync(projectPath, { recursive: true });
 
-  // Write prompt to file — never pass user content as CLI args
+  // Write prompt to file for record-keeping
   const promptFile = join(projectPath, "prompt.md");
   writeFileSync(promptFile, task.prompt, "utf-8");
 
@@ -31,9 +31,6 @@ export function spawnClaude(task: AgentTask): {
     "-p", // print mode (non-interactive)
     "--output-format",
     "json",
-    "--input-file",
-    promptFile,
-    "--dangerously-skip-permissions",
   ];
 
   if (task.systemPrompt) {
@@ -56,10 +53,14 @@ export function spawnClaude(task: AgentTask): {
   const proc = spawn("claude", args, {
     cwd: task.workingDirectory ?? projectPath,
     env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     signal: controller.signal,
     detached: true, // Process group for clean kill
   });
+
+  // Write prompt via stdin (claude -p reads from stdin)
+  proc.stdin?.write(task.prompt);
+  proc.stdin?.end();
 
   const session: ClaudeSession = {
     id: task.sessionId,

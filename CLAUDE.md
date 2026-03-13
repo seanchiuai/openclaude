@@ -2,6 +2,8 @@
 
 An autonomous AI assistant powered by Claude Code CLI. Fork of OpenClaw's architecture with Claude Code as the sole engine.
 
+**IMPORTANT: OpenClaude and OpenClaw are separate projects. Do not confuse them.** OpenClaw is the upstream project we forked from — it uses a different agent runtime (Pi). OpenClaude is THIS project — it replaces OpenClaw's engine with Claude Code CLI. When writing code, configs, docs, logs, or identifiers, always use "openclaude" (not "openclaw"). References to OpenClaw should only appear when discussing the upstream origin of extracted code.
+
 ## Project Structure
 
 ```
