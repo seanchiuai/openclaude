@@ -113,6 +113,12 @@ vi.mock("../memory/index.js", () => ({
   createMemoryManager: (...args: unknown[]) => mockCreateMemoryManager(...args),
 }));
 
+const mockLoadSkills = vi.fn().mockResolvedValue([]);
+
+vi.mock("../skills/index.js", () => ({
+  loadSkills: (...args: unknown[]) => mockLoadSkills(...args),
+}));
+
 const mockCronService = {
   start: vi.fn(),
   stop: vi.fn(),
@@ -180,6 +186,7 @@ beforeEach(() => {
   mockCronService.stop.mockReturnValue(undefined);
   mockHeartbeatRunner.start.mockReturnValue(undefined);
   mockHeartbeatRunner.stop.mockReturnValue(undefined);
+  mockLoadSkills.mockResolvedValue([]);
 });
 
 describe("startGateway", () => {

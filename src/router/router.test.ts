@@ -154,6 +154,132 @@ describe("createRouter", () => {
     expect(submitArg.prompt).toBe("run backup");
   });
 
+  it("skill trigger routes to engine with skill body as prompt", async () => {
+    const skills = [
+      {
+        name: "daily-standup",
+        description: "Daily standup",
+        triggers: ["/standup"],
+        body: "Review my recent git commits.",
+        path: "/skills/standup/SKILL.md",
+      },
+    ];
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"], skills });
+    const result = await router(makeMessage({ text: "/standup" }));
+
+    expect(pool.submit).toHaveBeenCalledOnce();
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.prompt).toBe("Review my recent git commits.");
+    expect(result).toBe("engine response");
+  });
+
+  it("skill trigger with args appends user request", async () => {
+    const skills = [
+      {
+        name: "daily-standup",
+        description: "Daily standup",
+        triggers: ["/standup"],
+        body: "Review my recent git commits.",
+        path: "/skills/standup/SKILL.md",
+      },
+    ];
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"], skills });
+    await router(makeMessage({ text: "/standup for last week" }));
+
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.prompt).toContain("Review my recent git commits.");
+    expect(submitArg.prompt).toContain("for last week");
+  });
+
+  it("injects memory context into systemPrompt for user messages", async () => {
+    const mockMemoryManager = {
+      search: vi.fn().mockResolvedValue([
+        {
+          path: "/memory/sean.md",
+          snippet: "Sean is a software engineer who loves TypeScript.",
+          score: 0.95,
+          citation: "sean.md#L1-L3",
+        },
+        {
+          path: "/memory/sean.md",
+          snippet: "Sean's favorite color is blue.",
+          score: 0.82,
+          citation: "sean.md#L5-L6",
+        },
+      ]),
+      status: vi.fn(),
+      sync: vi.fn(),
+      ingest: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const router = createRouter({
+      pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"],
+      memoryManager: mockMemoryManager as unknown as Parameters<typeof createRouter>[0]["memoryManager"],
+    });
+
+    await router(makeMessage({ text: "what do you know about Sean?" }));
+
+    expect(pool.submit).toHaveBeenCalledOnce();
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.systemPrompt).toBeDefined();
+    expect(submitArg.systemPrompt).toContain("persistent memory system");
+    expect(submitArg.systemPrompt).toContain("Sean is a software engineer");
+    expect(submitArg.systemPrompt).toContain("sean.md#L1-L3");
+    expect(submitArg.systemPrompt).toContain("0.95");
+  });
+
+  it("does not inject systemPrompt when memoryManager returns no results", async () => {
+    const mockMemoryManager = {
+      search: vi.fn().mockResolvedValue([]),
+      status: vi.fn(),
+      sync: vi.fn(),
+      ingest: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const router = createRouter({
+      pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"],
+      memoryManager: mockMemoryManager as unknown as Parameters<typeof createRouter>[0]["memoryManager"],
+    });
+
+    await router(makeMessage({ text: "hello there" }));
+
+    expect(pool.submit).toHaveBeenCalledOnce();
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.systemPrompt).toBeUndefined();
+  });
+
+  it("does not inject systemPrompt when memoryManager is not provided", async () => {
+    const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });
+    await router(makeMessage({ text: "hello there" }));
+
+    expect(pool.submit).toHaveBeenCalledOnce();
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.systemPrompt).toBeUndefined();
+  });
+
+  it("continues without systemPrompt when memory search throws", async () => {
+    const mockMemoryManager = {
+      search: vi.fn().mockRejectedValue(new Error("DB connection failed")),
+      status: vi.fn(),
+      sync: vi.fn(),
+      ingest: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const router = createRouter({
+      pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"],
+      memoryManager: mockMemoryManager as unknown as Parameters<typeof createRouter>[0]["memoryManager"],
+    });
+
+    await router(makeMessage({ text: "what do you know about Sean?" }));
+
+    expect(pool.submit).toHaveBeenCalledOnce();
+    const submitArg = pool.submit.mock.calls[0][0];
+    expect(submitArg.systemPrompt).toBeUndefined();
+  });
+
   it("engine error returns error message to channel", async () => {
     pool.submit.mockRejectedValueOnce(new Error("subprocess crashed"));
     const router = createRouter({ pool: pool as unknown as Parameters<typeof createRouter>[0]["pool"] });

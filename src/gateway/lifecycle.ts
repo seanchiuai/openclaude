@@ -8,6 +8,7 @@ import { ensureDirectories, loadConfig } from "../config/loader.js";
 import { createProcessPool } from "../engine/pool.js";
 import { createGatewayApp, startHttpServer } from "./http.js";
 import { createRouter } from "../router/index.js";
+import { loadSkills } from "../skills/index.js";
 import { createMemoryManager } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
@@ -57,6 +58,8 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     }
   };
 
+  const gatewayUrl = `http://localhost:${DEFAULT_PORT}`;
+
   // Cron service
   let cronService: CronService | undefined;
   if (config.cron.enabled) {
@@ -65,7 +68,13 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       runIsolatedJob: async (job) => {
         const sessionId = `cron-${job.id}-${Date.now()}`;
         try {
-          const result = await pool.submit({ sessionId, prompt: job.prompt, timeout: 300_000 });
+          const result = await pool.submit({
+            sessionId,
+            prompt: job.prompt,
+            timeout: 300_000,
+            mcpConfig: config.mcp,
+            gatewayUrl,
+          });
           return { status: "ok" as const, summary: result.text };
         } catch (err) {
           return { status: "error" as const, error: err instanceof Error ? err.message : String(err) };
@@ -91,7 +100,13 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
         runIsolated: async (prompt) => {
           const sessionId = `heartbeat-${Date.now()}`;
           try {
-            const result = await pool.submit({ sessionId, prompt, timeout: 300_000 });
+            const result = await pool.submit({
+              sessionId,
+              prompt,
+              timeout: 300_000,
+              mcpConfig: config.mcp,
+              gatewayUrl,
+            });
             return { status: "ok" as const, summary: result.text };
           } catch (err) {
             return { status: "error" as const, error: err instanceof Error ? err.message : String(err) };
@@ -104,14 +119,23 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     console.error("[gateway] Heartbeat started");
   }
 
+  // Load skills from ~/.openclaude/skills/
+  const skills = await loadSkills(paths.skills);
+  if (skills.length > 0) {
+    console.error(`[gateway] Loaded ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`);
+  }
+
   // Router returns response text — the channel bot sends it back directly
-  const router = createRouter({ pool, memoryManager, cronService });
+  const router = createRouter({ pool, memoryManager, cronService, skills, mcpConfig: config.mcp, gatewayUrl });
 
   // Start HTTP server
   const app = createGatewayApp({
     pool,
     startedAt: Date.now(),
     channels: channelNames,
+    cronService,
+    memoryManager,
+    channelAdapters: channels,
   });
   const server = startHttpServer(app, DEFAULT_PORT);
 
