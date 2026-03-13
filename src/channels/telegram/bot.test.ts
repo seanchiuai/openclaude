@@ -1,16 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { InboundMessage, MessageHandler } from "../types.js";
 
+const botInfo = { id: 12345, is_bot: true, first_name: "TestBot", username: "testbot" };
+
 vi.mock("grammy", () => {
   const handlers = new Map();
   return {
     Bot: vi.fn().mockImplementation(() => ({
-      api: { config: { use: vi.fn() }, sendMessage: vi.fn(), sendChatAction: vi.fn().mockResolvedValue(true) },
+      api: { config: { use: vi.fn() }, sendMessage: vi.fn(), sendChatAction: vi.fn().mockResolvedValue(true), setMessageReaction: vi.fn().mockResolvedValue(true) },
       on: vi.fn((event: string, handler: unknown) =>
         handlers.set(event, handler),
       ),
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
+      botInfo,
       _handlers: handlers,
     })),
   };
@@ -41,6 +44,9 @@ function makeTextCtx(overrides: {
   userId?: number;
   username?: string;
   text?: string;
+  chatType?: string;
+  replyToMessage?: object;
+  messageId?: number;
 }) {
   return {
     from: {
@@ -48,8 +54,12 @@ function makeTextCtx(overrides: {
       username: overrides.username ?? "testuser",
       first_name: "Test",
     },
-    chat: { id: overrides.chatId ?? 999 },
-    message: { text: overrides.text ?? "hello" },
+    chat: { id: overrides.chatId ?? 999, type: overrides.chatType ?? "private" },
+    message: {
+      message_id: overrides.messageId ?? 1,
+      text: overrides.text ?? "hello",
+      ...(overrides.replyToMessage ? { reply_to_message: overrides.replyToMessage } : {}),
+    },
   };
 }
 
@@ -58,6 +68,8 @@ function makePhotoCtx(overrides: {
   userId?: number;
   username?: string;
   caption?: string;
+  chatType?: string;
+  messageId?: number;
 }) {
   return {
     from: {
@@ -65,8 +77,9 @@ function makePhotoCtx(overrides: {
       username: overrides.username ?? "testuser",
       first_name: "Test",
     },
-    chat: { id: overrides.chatId ?? 999 },
+    chat: { id: overrides.chatId ?? 999, type: overrides.chatType ?? "private" },
     message: {
+      message_id: overrides.messageId ?? 1,
       caption: overrides.caption ?? "photo caption",
       photo: [
         { file_id: "small_id", width: 100, height: 100 },
@@ -82,6 +95,8 @@ function makeDocCtx(overrides: {
   userId?: number;
   username?: string;
   caption?: string;
+  chatType?: string;
+  messageId?: number;
 }) {
   return {
     from: {
@@ -89,8 +104,9 @@ function makeDocCtx(overrides: {
       username: overrides.username ?? "testuser",
       first_name: "Test",
     },
-    chat: { id: overrides.chatId ?? 999 },
+    chat: { id: overrides.chatId ?? 999, type: overrides.chatType ?? "private" },
     message: {
+      message_id: overrides.messageId ?? 1,
       caption: overrides.caption ?? "",
       document: {
         file_id: "doc_file_id",
@@ -313,6 +329,147 @@ describe("createTelegramChannel", () => {
     expect(handler).toHaveBeenCalledOnce();
     const msg: InboundMessage = handler.mock.calls[0][0];
     expect(msg.text).toBe("");
+  });
+
+  describe("requireMention gating", () => {
+    it("skips group message with no mention when requireMention is true", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const textHandler = bot._handlers.get("message:text")!;
+      const ctx = makeTextCtx({ text: "hello everyone", chatType: "supergroup" });
+
+      await textHandler(ctx);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("responds when @testbot in text", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const textHandler = bot._handlers.get("message:text")!;
+      const ctx = makeTextCtx({ text: "hey @testbot what's up", chatType: "group" });
+
+      await textHandler(ctx);
+      expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it("responds when reply to bot message", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const textHandler = bot._handlers.get("message:text")!;
+      const ctx = makeTextCtx({
+        text: "follow up",
+        chatType: "group",
+        replyToMessage: { from: { id: 12345 } },
+      });
+
+      await textHandler(ctx);
+      expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it("always responds in DMs", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const textHandler = bot._handlers.get("message:text")!;
+      const ctx = makeTextCtx({ text: "hello", chatType: "private" });
+
+      await textHandler(ctx);
+      expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it("responds to all when requireMention is false", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: false },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const textHandler = bot._handlers.get("message:text")!;
+      const ctx = makeTextCtx({ text: "hello", chatType: "supergroup" });
+
+      await textHandler(ctx);
+      expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it("defaults to true (no config field) — skips group msg", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token" },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const textHandler = bot._handlers.get("message:text")!;
+      const ctx = makeTextCtx({ text: "hello", chatType: "group" });
+
+      await textHandler(ctx);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("applies to photo messages", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const photoHandler = bot._handlers.get("message:photo")!;
+      const ctx = makePhotoCtx({ chatType: "group" });
+
+      await photoHandler(ctx);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("applies to document messages", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const docHandler = bot._handlers.get("message:document")!;
+      const ctx = makeDocCtx({ chatType: "group" });
+
+      await docHandler(ctx);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("photo caption @mention passes", async () => {
+      const handler = vi.fn().mockResolvedValue("ok");
+      createTelegramChannel(
+        { enabled: true, botToken: "token", requireMention: true },
+        handler,
+      );
+
+      const bot = getBotInstance();
+      const photoHandler = bot._handlers.get("message:photo")!;
+      const ctx = makePhotoCtx({ chatType: "group", caption: "look @testbot" });
+
+      await photoHandler(ctx);
+      expect(handler).toHaveBeenCalledOnce();
+    });
   });
 
   it("username falls back to first_name when username is undefined", async () => {

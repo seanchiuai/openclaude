@@ -41,6 +41,24 @@ export function createTelegramChannel(
   // Apply API throttler
   bot.api.config.use(apiThrottler());
 
+  function shouldSkipMessage(ctx: {
+    chat: { type: string };
+    message: { text?: string; caption?: string; reply_to_message?: { from?: { id: number } } };
+  }): boolean {
+    if (ctx.chat.type === "private") return false;
+    if (config.requireMention === false) return false;
+
+    const text = ctx.message.text ?? ctx.message.caption ?? "";
+    const username = bot.botInfo?.username;
+    if (username && text.toLowerCase().includes(`@${username.toLowerCase()}`)) {
+      return false;
+    }
+    if (ctx.message.reply_to_message?.from?.id === bot.botInfo?.id) {
+      return false;
+    }
+    return true;
+  }
+
   // Message handler
   bot.on("message:text", async (ctx) => {
     const userId = String(ctx.from.id);
@@ -49,6 +67,8 @@ export function createTelegramChannel(
     if (allowSet && !allowSet.has(userId)) {
       return; // Silently ignore unauthorized users
     }
+
+    if (shouldSkipMessage(ctx)) return;
 
     const message: InboundMessage = {
       channel: "telegram",
@@ -78,6 +98,7 @@ export function createTelegramChannel(
   bot.on("message:photo", async (ctx) => {
     const userId = String(ctx.from.id);
     if (allowSet && !allowSet.has(userId)) return;
+    if (shouldSkipMessage(ctx)) return;
 
     const photo = ctx.message.photo;
     const largest = photo[photo.length - 1];
@@ -116,6 +137,7 @@ export function createTelegramChannel(
   bot.on("message:document", async (ctx) => {
     const userId = String(ctx.from.id);
     if (allowSet && !allowSet.has(userId)) return;
+    if (shouldSkipMessage(ctx)) return;
 
     const doc = ctx.message.document;
 

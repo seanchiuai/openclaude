@@ -11,6 +11,7 @@ export const TelegramChannelSchema = z.object({
   defaultTo: z.string().optional(),
   mode: z.enum(["polling", "webhook"]).default("polling"),
   webhookUrl: z.string().url().optional(),
+  requireMention: z.boolean().default(true),
 });
 
 export const SlackChannelSchema = z.object({

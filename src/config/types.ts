@@ -10,6 +10,7 @@ export interface TelegramChannelConfig {
   defaultTo?: string;
   mode?: "polling" | "webhook";
   webhookUrl?: string;
+  requireMention?: boolean;
 }
 
 export interface SlackChannelConfig {
