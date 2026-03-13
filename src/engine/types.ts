@@ -11,6 +11,10 @@ export interface AgentTask {
   mcpConfig?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
   /** Gateway HTTP URL for auto-injected MCP server (e.g. http://localhost:45557) */
   gatewayUrl?: string;
+  /** Claude Code session UUID — used with --session-id or --resume */
+  claudeSessionId?: string;
+  /** If true, resume an existing session instead of creating a new one */
+  resumeSession?: boolean;
 }
 
 export type SessionStatus =
@@ -41,6 +45,8 @@ export interface ClaudeResult {
   exitCode: number;
   /** Duration in milliseconds */
   duration: number;
+  /** Claude Code session UUID extracted from the init event */
+  claudeSessionId?: string;
 }
 
 export interface PoolStats {

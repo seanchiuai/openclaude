@@ -36,8 +36,15 @@ export function spawnClaude(task: AgentTask): {
     "json",
   ];
 
-  if (task.systemPrompt) {
-    // --system-prompt takes a string literal, not a file path
+  // Add session flags: --resume for continuing, --session-id for new named sessions
+  if (task.resumeSession && task.claudeSessionId) {
+    args.push("--resume", task.claudeSessionId);
+  } else if (task.claudeSessionId) {
+    args.push("--session-id", task.claudeSessionId);
+  }
+
+  // Only pass --system-prompt on first message (not on resume — context is already in session)
+  if (task.systemPrompt && !task.resumeSession) {
     args.push("--system-prompt", task.systemPrompt);
   }
 
@@ -170,6 +177,12 @@ function parseClaudeOutput(
       if (resultEvent && typeof resultEvent.result === "string") {
         text = resultEvent.result;
       }
+
+      // Extract session_id from the init event for session persistence
+      const initEvent = parsed.find(
+        (e: Record<string, unknown>) => e.type === "system" && e.subtype === "init",
+      );
+      claudeSessionId = initEvent?.session_id as string | undefined;
     } else if (typeof parsed === "object" && parsed !== null && "result" in parsed) {
       text = String(parsed.result);
     }
@@ -177,7 +190,7 @@ function parseClaudeOutput(
     // Not JSON, use raw stdout
   }
 
-  return { text: text.trim(), raw, exitCode, duration };
+  return { text: text.trim(), raw, exitCode, duration, claudeSessionId };
 }
 
 function killProcessGroup(pid: number | undefined): void {
