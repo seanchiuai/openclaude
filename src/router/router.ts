@@ -206,6 +206,10 @@ export function createRouter(deps: RouterDeps): Router {
           });
           chatSession.messageCount++;
           chatSession.lastMessageAt = Date.now();
+          // Update stored session ID if CLI returned a different one (OpenClaw parity)
+          if (result.claudeSessionId && result.claudeSessionId !== chatSession.claudeSessionId) {
+            chatSession.claudeSessionId = result.claudeSessionId;
+          }
           saveSessionMap(mainSessions);
           return result.text;
         } catch (err) {
@@ -270,6 +274,10 @@ export function createRouter(deps: RouterDeps): Router {
       });
       chatSession.messageCount++;
       chatSession.lastMessageAt = Date.now();
+      // Update stored session ID if CLI returned a different one (OpenClaw parity)
+      if (result.claudeSessionId && result.claudeSessionId !== chatSession.claudeSessionId) {
+        chatSession.claudeSessionId = result.claudeSessionId;
+      }
       saveSessionMap(mainSessions);
       return result.text;
     } catch (err) {
