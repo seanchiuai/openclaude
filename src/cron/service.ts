@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createLogger } from "../logging/logger.js";
 import type {
   CronJob,
   CronRunOutcome,
@@ -34,6 +35,8 @@ export interface CronService {
   getJob(id: string): CronJob | undefined;
   status(): { running: boolean; jobCount: number; enabledCount: number };
 }
+
+const log = createLogger("cron");
 
 export function createCronService(deps: CronServiceDeps): CronService {
   let store: CronStore = { version: 1, jobs: [] };
@@ -90,7 +93,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
       let stuckCleared = false;
       for (const job of store.jobs) {
         if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
-          console.error(`[cron] Clearing stuck job "${job.name}"`);
+          log.warn(`Clearing stuck job "${job.name}"`);
           job.state.runningAtMs = undefined;
           job.state.lastStatus = "error";
           job.state.lastError = "Cleared: stuck for over 2 hours";
@@ -186,7 +189,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
         try {
           store = await loadCronStore(deps.storePath);
         } catch (err) {
-          console.error("[cron] Failed to load store, starting empty:", err);
+          log.error("Failed to load store, starting empty", { error: err instanceof Error ? err.message : String(err) });
           store = { version: 1, jobs: [] };
         }
         const now = Date.now();
@@ -195,7 +198,7 @@ export function createCronService(deps: CronServiceDeps): CronService {
         let stuckCleared = false;
         for (const job of store.jobs) {
           if (job.state.runningAtMs !== undefined && now - job.state.runningAtMs > STUCK_RUN_MS) {
-            console.error(`[cron] Clearing stuck job "${job.name}"`);
+            log.warn(`Clearing stuck job "${job.name}"`);
             job.state.runningAtMs = undefined;
             job.state.lastStatus = "error";
             job.state.lastError = "Cleared: stuck for over 2 hours";
