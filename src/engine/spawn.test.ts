@@ -228,6 +228,72 @@ describe("spawnClaude", () => {
     expect(args).toContain("--system-prompt");
     expect(args).toContain("You are a helpful assistant");
   });
+
+  it("passes --session-id when claudeSessionId is set (first message)", () => {
+    spawnClaude({
+      sessionId: "s1",
+      prompt: "test",
+      claudeSessionId: "uuid-abc-123",
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain("--session-id");
+    expect(args).toContain("uuid-abc-123");
+    expect(args).not.toContain("--resume");
+  });
+
+  it("passes --resume when resumeSession is true", () => {
+    spawnClaude({
+      sessionId: "s1",
+      prompt: "test",
+      claudeSessionId: "uuid-abc-123",
+      resumeSession: true,
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain("--resume");
+    expect(args).toContain("uuid-abc-123");
+    expect(args).not.toContain("--session-id");
+  });
+
+  it("skips --system-prompt when resumeSession is true", () => {
+    spawnClaude({
+      sessionId: "s1",
+      prompt: "test",
+      systemPrompt: "You are helpful.",
+      claudeSessionId: "uuid-abc-123",
+      resumeSession: true,
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--system-prompt");
+  });
+
+  it("does not pass session flags when claudeSessionId is undefined", () => {
+    spawnClaude({
+      sessionId: "s1",
+      prompt: "test",
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--session-id");
+    expect(args).not.toContain("--resume");
+  });
+
+  it("extracts claudeSessionId from init event in output", async () => {
+    const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
+
+    const jsonOutput = JSON.stringify([
+      { type: "system", subtype: "init", session_id: "extracted-uuid-456" },
+      { type: "result", result: "Done!" },
+    ]);
+    mockProc._stdout.emit("data", Buffer.from(jsonOutput));
+    mockProc.emit("close", 0, null);
+
+    const result = await promise;
+    expect(result.claudeSessionId).toBe("extracted-uuid-456");
+    expect(result.text).toBe("Done!");
+  });
 });
 
 describe("killProcessGroup", () => {
