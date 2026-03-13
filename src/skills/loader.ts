@@ -40,17 +40,34 @@ function parseFrontmatter(content: string): {
   try {
     const meta: Record<string, unknown> = {};
     const lines = match[1]!.split("\n");
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       const colonIdx = line.indexOf(":");
       if (colonIdx === -1) continue;
       const key = line.slice(0, colonIdx).trim();
       let value: unknown = line.slice(colonIdx + 1).trim();
-      // Handle array values like [github, gh]
+      // Handle inline array values like [github, gh]
       if (typeof value === "string" && value.startsWith("[") && value.endsWith("]")) {
         value = value
           .slice(1, -1)
           .split(",")
           .map((s: string) => s.trim());
+      } else if (typeof value === "string" && value === "") {
+        // Check for YAML multi-line list syntax (- item on following lines)
+        const listItems: string[] = [];
+        while (i + 1 < lines.length) {
+          const nextLine = lines[i + 1]!;
+          const listMatch = nextLine.match(/^\s+-\s+(.+)$/);
+          if (listMatch) {
+            listItems.push(listMatch[1]!.trim());
+            i++;
+          } else {
+            break;
+          }
+        }
+        if (listItems.length > 0) {
+          value = listItems;
+        }
       }
       meta[key] = value;
     }

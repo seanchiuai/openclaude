@@ -56,17 +56,34 @@ vi.mock("./loader.js", () => {
     try {
       const meta: Record<string, unknown> = {};
       const lines = match[1]!.split("\n");
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
         const colonIdx = line.indexOf(":");
         if (colonIdx === -1) continue;
         const key = line.slice(0, colonIdx).trim();
         let value: unknown = line.slice(colonIdx + 1).trim();
-        // Handle array values like [github, gh]
+        // Handle inline array values like [github, gh]
         if (typeof value === "string" && value.startsWith("[") && value.endsWith("]")) {
           value = value
             .slice(1, -1)
             .split(",")
             .map((s: string) => s.trim());
+        } else if (typeof value === "string" && value === "") {
+          // Check for YAML multi-line list syntax (- item on following lines)
+          const listItems: string[] = [];
+          while (i + 1 < lines.length) {
+            const nextLine = lines[i + 1]!;
+            const listMatch = nextLine.match(/^\s+-\s+(.+)$/);
+            if (listMatch) {
+              listItems.push(listMatch[1]!.trim());
+              i++;
+            } else {
+              break;
+            }
+          }
+          if (listItems.length > 0) {
+            value = listItems;
+          }
         }
         meta[key] = value;
       }
@@ -217,6 +234,30 @@ Interact with GitHub API.`,
     expect(skills).toHaveLength(1);
     expect(skills[0]!.name).toBe("github");
     expect(skills[0]!.path).toContain("github");
+  });
+
+  it("parses YAML dash-style list triggers", async () => {
+    writeFileSync(
+      join(tempDir, "SKILL.md"),
+      `---
+name: daily-standup
+description: Generate a daily standup summary
+triggers:
+  - /standup
+  - standup
+---
+Review my recent git commits.`,
+    );
+
+    const skills = await loadSkills(tempDir);
+
+    expect(skills[0]).toEqual(
+      expect.objectContaining({
+        name: "daily-standup",
+        description: "Generate a daily standup summary",
+        triggers: ["/standup", "standup"],
+      }),
+    );
   });
 
   it("empty skills directory returns empty array", async () => {

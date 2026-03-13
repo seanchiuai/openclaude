@@ -39,7 +39,7 @@ vi.mock("./commands.js", () => {
     const command = trimmed.slice(1).split(/\s+/)[0]!.toLowerCase();
 
     for (const skill of skills) {
-      if (skill.triggers?.includes(command)) {
+      if (skill.triggers?.some((t) => t.replace(/^\//, "").toLowerCase() === command)) {
         return skill;
       }
       if (skill.name.toLowerCase() === command) {
@@ -94,6 +94,21 @@ describe("matchSkillCommand", () => {
   it("unknown skill command returns null", () => {
     const result = matchSkillCommand("/unknown", sampleSkills);
     expect(result).toBeNull();
+  });
+
+  it("matches trigger that includes leading slash", () => {
+    const skillsWithSlash: SkillEntry[] = [
+      {
+        name: "daily-standup",
+        description: "Daily standup",
+        triggers: ["/standup"],
+        body: "Do standup.",
+        path: "/skills/standup/SKILL.md",
+      },
+    ];
+    const result = matchSkillCommand("/standup", skillsWithSlash);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe("daily-standup");
   });
 
   it("non-slash text returns null", () => {

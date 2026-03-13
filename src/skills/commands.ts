@@ -10,7 +10,7 @@ export function matchSkillCommand(
   const command = trimmed.slice(1).split(/\s+/)[0]!.toLowerCase();
 
   for (const skill of skills) {
-    if (skill.triggers?.includes(command)) {
+    if (skill.triggers?.some((t) => t.replace(/^\//, "").toLowerCase() === command)) {
       return skill;
     }
     if (skill.name.toLowerCase() === command) {
