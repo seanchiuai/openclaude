@@ -34,10 +34,13 @@ export function createCommandHandlers(deps: CommandDeps) {
       return `Active sessions:\n${lines.join("\n")}`;
     },
 
+    // /stop is now handled directly in the router (with message context)
+    // so it can auto-resolve the current chat's session. This handler is
+    // kept as a fallback for API/direct calls but should not normally fire.
     stop: async (cmd) => {
       const sessionId = cmd.args.trim();
       if (!sessionId) {
-        return "Usage: /stop <session-id>";
+        return "Usage: /stop [session-id] — or just /stop in chat to stop the current task.";
       }
 
       const killed = pool.killSession(sessionId);
@@ -59,7 +62,7 @@ export function createCommandHandlers(deps: CommandDeps) {
       return [
         "OpenClaude Commands:",
         "/list - Show active sessions",
-        "/stop <id> - Stop a session",
+        "/stop - Stop the current task (or /stop <id> for a specific session)",
         "/status - Show system status",
         "/memory - Show memory status",
         "/memorysync - Force memory sync",

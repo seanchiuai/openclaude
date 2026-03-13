@@ -142,6 +142,31 @@ export function createRouter(deps: RouterDeps): Router {
           : "No active session for this chat.";
       }
 
+      // /stop — handled here (not in generic command handler) so we have
+      // access to message context and can resolve the session automatically.
+      if (command.name === "stop") {
+        const explicitId = command.args.trim();
+        if (explicitId) {
+          // Explicit session ID provided
+          const killed = pool.killSession(explicitId);
+          return killed
+            ? `Session ${explicitId} stopped.`
+            : `Session ${explicitId} not found.`;
+        }
+
+        // No args → stop the current chat's session
+        const sessionKey = deriveSessionKey(message);
+        const chatSession = mainSessions.get(sessionKey);
+        if (!chatSession) {
+          return "No active session for this chat.";
+        }
+
+        const killed = pool.killSession(chatSession.sessionId);
+        return killed
+          ? "Stopped."
+          : "No running task for this chat.";
+      }
+
       // 1. Parse commands
       if (GATEWAY_COMMANDS.has(command.name)) {
         const handler = handlers[command.name];

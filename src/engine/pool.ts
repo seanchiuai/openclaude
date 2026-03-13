@@ -98,8 +98,25 @@ export function createProcessPool(maxConcurrent = 4) {
     session.status = "killed";
     session.completedAt = Date.now();
     running.delete(sessionId);
+
+    // Also remove any queued tasks for this session
+    dequeueBySessionId(sessionId);
+
     tryDequeue();
     return true;
+  }
+
+  /** Remove all queued tasks matching a session ID. Returns count removed. */
+  function dequeueBySessionId(sessionId: string): number {
+    let removed = 0;
+    for (let i = queue.length - 1; i >= 0; i--) {
+      if (queue[i].task.sessionId === sessionId) {
+        const [entry] = queue.splice(i, 1);
+        entry.reject(new Error("Session stopped"));
+        removed++;
+      }
+    }
+    return removed;
   }
 
   function waitForProcessesExit(pids: number[], timeoutMs: number): Promise<void> {

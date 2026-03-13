@@ -142,11 +142,30 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    await withTypingAndReactions(
+    // /stop must bypass the typing wrapper — it needs to execute instantly
+    // even if a previous message handler is still running.
+    // Fire-and-forget all handlers so grammY can dispatch the next update
+    // without waiting for Claude to finish.
+    const isAbort = /^\/stop(?:@\S+)?(?:\s|$)/i.test(ctx.message.text);
+    if (isAbort) {
+      try {
+        const response = await onMessage(message);
+        if (response) await sendText(bot, String(ctx.chat.id), response);
+      } catch (err) {
+        console.error("[telegram] /stop error:", err);
+      }
+      return;
+    }
+
+    // Fire-and-forget: don't block grammY's update loop so /stop can
+    // be dispatched while a long-running task is in progress.
+    withTypingAndReactions(
       String(ctx.chat.id),
       ctx.message.message_id,
       () => onMessage(message),
-    );
+    ).catch((err) => {
+      console.error("[telegram] handler error:", err);
+    });
   });
 
   // Photo handler
@@ -175,11 +194,13 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    await withTypingAndReactions(
+    withTypingAndReactions(
       String(ctx.chat.id),
       ctx.message.message_id,
       () => onMessage(message),
-    );
+    ).catch((err) => {
+      console.error("[telegram] handler error:", err);
+    });
   });
 
   // Document handler
@@ -209,11 +230,13 @@ export function createTelegramChannel(
       raw: ctx,
     };
 
-    await withTypingAndReactions(
+    withTypingAndReactions(
       String(ctx.chat.id),
       ctx.message.message_id,
       () => onMessage(message),
-    );
+    ).catch((err) => {
+      console.error("[telegram] handler error:", err);
+    });
   });
 
   async function startPolling(): Promise<void> {
