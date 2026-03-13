@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paths } from "../config/paths.js";
-import type { AgentTask, ClaudeResult, ClaudeSession, OnStreamEvent } from "./types.js";
+import type { AgentTask, ClaudeResult, ClaudeSession, OnStreamEvent, TokenUsage } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -106,6 +106,10 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
     const errChunks: Buffer[] = [];
     let lineBuf = "";
     let streamSessionId: string | undefined;
+    let usage: TokenUsage | undefined;
+    let numTurns: number | undefined;
+    let compacted = false;
+    let preCompactTokens: number | undefined;
 
     proc.stdout?.on("data", (chunk: Buffer) => {
       lineBuf += chunk.toString("utf-8");
@@ -123,6 +127,34 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
           // Extract session_id eagerly from init event
           if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
             streamSessionId = event.session_id;
+          }
+
+          // Extract token usage from result event
+          if (event.type === "result") {
+            const u = event.usage as Record<string, unknown> | undefined;
+            if (u) {
+              usage = {
+                inputTokens: (u.input_tokens as number) ?? 0,
+                outputTokens: (u.output_tokens as number) ?? 0,
+                cacheReadTokens: (u.cache_read_input_tokens as number) ?? 0,
+                cacheCreationTokens: (u.cache_creation_input_tokens as number) ?? 0,
+                totalCostUsd: (event.total_cost_usd as number) ?? 0,
+              };
+              if (onEvent) {
+                onEvent({ type: "usage", inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd: usage.totalCostUsd });
+              }
+            }
+            numTurns = (event.num_turns as number) ?? undefined;
+          }
+
+          // Detect auto-compaction boundary
+          if (event.type === "system" && event.subtype === "compact_boundary") {
+            compacted = true;
+            const metadata = event.compact_metadata as Record<string, unknown> | undefined;
+            preCompactTokens = (metadata?.pre_tokens as number) ?? undefined;
+            if (onEvent && typeof preCompactTokens === "number") {
+              onEvent({ type: "compaction", preTokens: preCompactTokens });
+            }
           }
 
           // Stream assistant text events to callback
@@ -204,6 +236,10 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
         exitCode,
         duration,
         claudeSessionId,
+        usage,
+        numTurns,
+        compacted: compacted || undefined,
+        preCompactTokens,
       };
 
       if (exitCode !== 0) {

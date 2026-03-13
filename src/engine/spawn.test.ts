@@ -283,6 +283,100 @@ describe("spawnClaude", () => {
     expect(args).not.toContain("--resume");
   });
 
+  it("extracts token usage from result event", async () => {
+    const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
+
+    const ndjson = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "abc" }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "Done!",
+        num_turns: 3,
+        total_cost_usd: 0.05,
+        usage: {
+          input_tokens: 1500,
+          output_tokens: 500,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 100,
+        },
+      }),
+    ].join("\n") + "\n";
+    mockProc._stdout.emit("data", Buffer.from(ndjson));
+    mockProc.emit("close", 0, null);
+
+    const result = await promise;
+    expect(result.usage).toEqual({
+      inputTokens: 1500,
+      outputTokens: 500,
+      cacheReadTokens: 200,
+      cacheCreationTokens: 100,
+      totalCostUsd: 0.05,
+    });
+    expect(result.numTurns).toBe(3);
+  });
+
+  it("detects compact_boundary event", async () => {
+    const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
+
+    const ndjson = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "abc" }),
+      JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 180000 },
+      }),
+      JSON.stringify({ type: "result", result: "Done!" }),
+    ].join("\n") + "\n";
+    mockProc._stdout.emit("data", Buffer.from(ndjson));
+    mockProc.emit("close", 0, null);
+
+    const result = await promise;
+    expect(result.compacted).toBe(true);
+    expect(result.preCompactTokens).toBe(180000);
+  });
+
+  it("emits usage and compaction stream events via onEvent", async () => {
+    const events: unknown[] = [];
+    const onEvent = (e: unknown) => events.push(e);
+    const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" }, onEvent);
+
+    const ndjson = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "abc" }),
+      JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 150000 },
+      }),
+      JSON.stringify({
+        type: "result",
+        result: "Done!",
+        total_cost_usd: 0.03,
+        usage: { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      }),
+    ].join("\n") + "\n";
+    mockProc._stdout.emit("data", Buffer.from(ndjson));
+    mockProc.emit("close", 0, null);
+
+    await promise;
+    expect(events).toContainEqual({ type: "compaction", preTokens: 150000 });
+    expect(events).toContainEqual({ type: "usage", inputTokens: 1000, outputTokens: 200, costUsd: 0.03 });
+  });
+
+  it("result without usage field leaves usage undefined", async () => {
+    const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
+
+    const ndjson = [
+      JSON.stringify({ type: "result", result: "Done!" }),
+    ].join("\n") + "\n";
+    mockProc._stdout.emit("data", Buffer.from(ndjson));
+    mockProc.emit("close", 0, null);
+
+    const result = await promise;
+    expect(result.usage).toBeUndefined();
+    expect(result.compacted).toBeUndefined();
+  });
+
   it("extracts claudeSessionId from init event in NDJSON output", async () => {
     const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
 

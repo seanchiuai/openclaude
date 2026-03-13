@@ -38,6 +38,14 @@ export interface ClaudeSession {
   error?: string;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalCostUsd: number;
+}
+
 export interface ClaudeResult {
   /** The text output from Claude */
   text: string;
@@ -49,6 +57,14 @@ export interface ClaudeResult {
   duration: number;
   /** Claude Code session UUID extracted from the init event */
   claudeSessionId?: string;
+  /** Token usage from the result event */
+  usage?: TokenUsage;
+  /** Number of agentic turns (tool-use round trips) */
+  numTurns?: number;
+  /** True if auto-compaction occurred during this turn */
+  compacted?: boolean;
+  /** Token count before compaction (from compact_boundary event) */
+  preCompactTokens?: number;
 }
 
 export interface PoolStats {
@@ -60,6 +76,8 @@ export interface PoolStats {
 export type StreamEvent =
   | { type: "text"; text: string }
   | { type: "status"; message: string }
-  | { type: "queued"; position: number };
+  | { type: "queued"; position: number }
+  | { type: "compaction"; preTokens: number }
+  | { type: "usage"; inputTokens: number; outputTokens: number; costUsd: number };
 
 export type OnStreamEvent = (event: StreamEvent) => void;
