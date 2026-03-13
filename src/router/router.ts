@@ -26,6 +26,8 @@ import { buildSystemPrompt } from "../engine/system-prompt.js";
 import {
   loadWorkspaceBootstrapFiles,
   buildBootstrapContextFiles,
+  filterBootstrapFilesForMinimal,
+  ensureAgentWorkspace,
 } from "../engine/workspace.js";
 
 const IDLE_THRESHOLD = 4 * 60 * 60 * 1000; // 4 hours
@@ -72,37 +74,55 @@ export function createRouter(deps: RouterDeps): Router {
     GATEWAY_COMMANDS,
   );
 
-  async function buildFirstMessageSystemPrompt(
-    query: string,
-    message: InboundMessage,
-  ): Promise<string | undefined> {
-    // Fetch memory context for injection into system prompt
-    let memoryContext: string | undefined;
-    if (memoryManager) {
-      try {
-        const memories = await memoryManager.search(query, { maxResults: 3 });
-        if (memories.length > 0) {
-          memoryContext = memories
-            .map(m => `[${m.citation}] (score: ${m.score.toFixed(2)})\n${m.snippet}`)
-            .join("\n\n");
-        }
-      } catch {
-        // Memory search failed, continue without context
-      }
-    }
+  // Ensure workspace files exist on startup (matches OpenClaw's ensureAgentWorkspace)
+  ensureAgentWorkspace();
 
-    // Load workspace bootstrap files (AGENTS.md, SOUL.md, etc.)
-    const bootstrapFiles = loadWorkspaceBootstrapFiles();
+  async function fetchMemoryContext(query: string): Promise<string | undefined> {
+    if (!memoryManager) return undefined;
+    try {
+      const memories = await memoryManager.search(query, { maxResults: 3 });
+      if (memories.length > 0) {
+        return memories
+          .map(m => `[${m.citation}] (score: ${m.score.toFixed(2)})\n${m.snippet}`)
+          .join("\n\n");
+      }
+    } catch {
+      // Memory search failed, continue without context
+    }
+    return undefined;
+  }
+
+  function buildSystemPromptForSession(params: {
+    memoryContext?: string;
+    channel: string;
+    minimal?: boolean;
+  }): string {
+    // Load workspace bootstrap files (cached by inode/mtime)
+    const allBootstrapFiles = loadWorkspaceBootstrapFiles();
+    const bootstrapFiles = params.minimal
+      ? filterBootstrapFilesForMinimal(allBootstrapFiles)
+      : allBootstrapFiles;
     const { contextFiles, truncationWarnings } = buildBootstrapContextFiles(bootstrapFiles);
 
     return buildSystemPrompt({
       skills,
-      memoryContext,
+      memoryContext: params.memoryContext,
       hasGatewayTools: !!gatewayUrl,
-      channel: message.channel,
+      channel: params.channel,
       workspaceDir: process.cwd(),
       contextFiles,
       bootstrapTruncationWarnings: truncationWarnings,
+    });
+  }
+
+  async function buildFirstMessageSystemPrompt(
+    query: string,
+    message: InboundMessage,
+  ): Promise<string> {
+    const memoryContext = await fetchMemoryContext(query);
+    return buildSystemPromptForSession({
+      memoryContext,
+      channel: message.channel,
     });
   }
 
@@ -191,13 +211,18 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
-    // 3. Cron-triggered → isolated session (unique ID each time)
+    // 3. Cron-triggered → isolated session with minimal bootstrap (matches OpenClaw)
     if (message.source === "cron") {
       const sessionId = `cron-${randomUUID().slice(0, 8)}`;
+      const systemPrompt = buildSystemPromptForSession({
+        channel: message.channel,
+        minimal: true,
+      });
       try {
         const result = await pool.submit({
           sessionId,
           prompt: message.text,
+          systemPrompt,
           timeout: 300_000,
           mcpConfig,
           gatewayUrl,
