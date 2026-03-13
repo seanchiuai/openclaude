@@ -20,6 +20,7 @@ The engine module spawns and manages Claude Code CLI subprocesses as the autonom
 - `src/engine/spawn.ts` - Subprocess spawning with session isolation
 - `src/engine/pool.ts` - Process pool with FIFO queue (max 4 concurrent)
 - `src/engine/types.ts` - Core type definitions (AgentTask, ClaudeSession, ClaudeResult)
+- `src/engine/orphan-reaper.ts` - Stale process cleanup at startup
 
 ## Architecture
 
@@ -69,6 +70,16 @@ interface ClaudeSession {
   result?: ClaudeResult;
 }
 ```
+
+### Orphan Reaper
+
+`src/engine/orphan-reaper.ts` cleans up stale gateway processes at startup:
+
+- `cleanStaleGatewayProcessesSync(port)` — called in `lifecycle.ts` before binding
+- Discovers processes on the gateway port via `lsof -i :port`
+- Sends SIGTERM, waits, then SIGKILL if needed
+- Polls until port is free before proceeding
+- `parsePidsFromLsofOutput()` — pure function for parsing lsof output (testable)
 
 ## Critical Rules
 

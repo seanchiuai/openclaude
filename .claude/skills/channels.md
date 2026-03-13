@@ -62,12 +62,24 @@ type MessageHandler = (message: InboundMessage) => Promise<string>;
 Channel receives message → allow-list check → MessageHandler(inbound) → router → engine → response → sendText()
 ```
 
+### Typing Indicators
+
+Shared typing indicator system in `src/channels/typing.ts` used by all channels:
+
+- `createTypingCallbacks(adapter, chatId, opts?)` — returns `{onStart, onFinish}` callbacks
+- **TTL safety**: auto-stops after `maxDurationMs` (default 60s) to prevent leaked indicators
+- **Keepalive loop**: sends periodic typing actions at configurable intervals
+- **Start failure guard**: catches and logs errors from adapter's typing API — never blocks message processing
+- Telegram uses `maxDurationMs: 300_000` (5 minutes) for long-running Claude responses
+- Test coverage in `src/channels/typing.test.ts`
+
 ### Telegram Specifics
 
 - grammY v1.41 with transformer-throttler for rate limiting
 - Long-polling with exponential backoff (2s→30s, factor 1.8, jitter 0.25)
 - Auto-restart on polling failure
 - **409 Conflict**: Only one process can poll a bot token
+- Uses structured logger (`createLogger("telegram")`) for polling errors and typing issues
 
 ### Slack Specifics
 

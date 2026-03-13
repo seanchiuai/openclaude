@@ -1,0 +1,1 @@
+clean up `/docs/CHANGELOG.md`and all other docs in `/docs` by removing any information uncessary or insignnificant to the futurer the development of this app that devs in the future would not need.

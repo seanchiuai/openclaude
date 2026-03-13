@@ -58,12 +58,20 @@ const prompt = [
 
 ```typescript
 interface ChatSession {
-  sessionId: string;        // Internal ID for pool (e.g. "main-abc123")
-  claudeSessionId: string;  // UUID for Claude Code --session-id/--resume
-  lastMessageAt: number;    // For idle reset (4h threshold)
-  messageCount: number;     // 0 = first (--session-id), 1+ = --resume
+  sessionId: string;            // Internal ID for pool (e.g. "main-abc123")
+  claudeSessionId: string;      // UUID for Claude Code --session-id/--resume
+  lastMessageAt: number;        // For idle reset (4h threshold)
+  messageCount: number;         // 0 = first (--session-id), 1+ = --resume
+  totalInputTokens?: number;    // Accumulated input tokens (for memory flush)
+  totalOutputTokens?: number;   // Accumulated output tokens
+  compactionCount?: number;     // Auto-compaction count
+  lastFlushCompactionCount?: number; // Compaction count at last memory flush
 }
 ```
+
+### Pre-Turn Memory Flush
+
+Before dispatching user messages, the router calls `shouldFlushMemory(session)` from `src/memory/memory-flush.ts`. If true, it runs `flushSessionToMemory()` to preserve durable facts before context compaction. This ensures long-running sessions don't lose important context.
 
 - Session key: `{channel}:{chatId}` (stable per chat)
 - Persisted to `~/.openclaude/sessions-map.json`

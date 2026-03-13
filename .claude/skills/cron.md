@@ -49,6 +49,7 @@ add(job) → persisted to jobs.json → timer armed
 - Auto-delivery of results to Telegram/Slack if target specified
 - Isolated sessions: each job spawns a separate Claude process
 - Jobs persisted to `~/.openclaude/cron/jobs.json`
+- Uses structured logger (`createLogger("cron")`) — logs job execution, stuck jobs, and load failures to `~/.openclaude/logs/gateway.log`
 
 ### CronJob Interface
 

@@ -22,6 +22,8 @@ Two-layer memory system extracted from OpenClaw: markdown files as source of tru
 - `src/memory/internal.ts` - Markdown chunking, file discovery
 - `src/memory/mmr.ts` - Maximal Marginal Relevance for diversity
 - `src/memory/temporal-decay.ts` - Time-based relevance decay
+- `src/memory/memory-flush.ts` - Pre-turn context preservation flush
+- `src/memory/memory-flush.test.ts` - Flush trigger and behavior tests
 
 ## Architecture
 
@@ -73,6 +75,18 @@ interface MemorySearchResult {
 - MMR ensures diverse results (not just top-N most similar)
 - Temporal decay reduces relevance of old memories
 - Auto-sync on manager creation scans for new/changed files
+
+### Memory Flush (Pre-Turn Context Preservation)
+
+`src/memory/memory-flush.ts` saves durable facts to dated markdown files before context compaction:
+
+- `shouldFlushMemory(session)` — returns true when flush is needed
+- `flushSessionToMemory()` — extracts facts and appends to `~/.openclaude/memory/YYYY-MM-DD.md`
+- **Token trigger**: flushes when `totalInputTokens >= 65%` of effective context window
+- **Compaction trigger**: flushes when auto-compaction has occurred since last flush
+- Constants: `DEFAULT_CONTEXT_WINDOW = 200_000`, `FLUSH_THRESHOLD_RATIO = 0.65`
+- Called by router pre-turn (before user message dispatch)
+- Test coverage in `src/memory/memory-flush.test.ts`
 
 ## OpenClaw Reference
 

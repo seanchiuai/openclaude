@@ -21,6 +21,8 @@ The gateway is the main entry point that orchestrates all subsystems: config loa
 - `src/gateway/http.ts` - Hono HTTP endpoints
 - `src/gateway/launchd.ts` - macOS LaunchAgent install/uninstall
 - `src/gateway/lifecycle.test.ts` - Integration tests
+- `src/logging/logger.ts` - Structured JSON logger used across all subsystems
+- `src/logging/diagnostic.ts` - Diagnostic heartbeat for infrastructure monitoring
 
 ## Architecture
 
@@ -28,6 +30,7 @@ The gateway is the main entry point that orchestrates all subsystems: config loa
 
 ```
 startGateway(configPath?)
+  → cleanStaleGatewayProcessesSync(port)  // orphan reaper
   → loadConfig()
   → createProcessPool()
   → initChannels() (Telegram, Slack)
@@ -35,6 +38,17 @@ startGateway(configPath?)
   → createCronService()
   → startHttpServer() (port 45557)
 ```
+
+### Structured Logging
+
+All subsystems use `src/logging/logger.ts` — a structured JSON logger:
+
+- **Log file**: `~/.openclaude/logs/gateway.log` (JSON lines)
+- **Stderr**: colored human-readable output
+- **Log levels**: fatal, error, warn, info, debug, trace
+- **Config**: `OPENCLAUDE_LOG_LEVEL` env var (default: info)
+- **Child loggers**: `createLogger("subsystem")` for hierarchical logging
+- Used by: gateway, channels, config, cron, engine, memory, skills
 
 ### HTTP Endpoints
 
