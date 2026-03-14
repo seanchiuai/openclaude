@@ -18,9 +18,7 @@ import { killProcessGroup } from "../engine/spawn.js";
 import { createMemoryManager } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
-import { createSubagentRegistry } from "../engine/subagent-registry.js";
-import type { SubagentRegistry } from "../engine/subagent-registry.js";
-import type { SubagentRun } from "../engine/subagent-registry.js";
+import { createSubagentRegistry, type SubagentRegistry, type SubagentRun } from "../engine/subagent-registry.js";
 import { createAnnouncePipeline } from "../engine/subagent-announce.js";
 import { buildChildSystemPrompt } from "../engine/system-prompt.js";
 import { join } from "node:path";
@@ -167,7 +165,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   }
 
   // Router returns response text — the channel bot sends it back directly
-  const rawRouter = createRouter({ pool, memoryManager, cronService, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
+  const rawRouter = createRouter({ pool, memoryManager, cronService, subagentRegistry, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
   const router: typeof rawRouter = (msg, onEvent) => {
     markActivity();
     return rawRouter(msg, onEvent);
@@ -175,45 +173,37 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
 
   // Announce pipeline — resumes parent when children complete
   const announcePipeline = createAnnouncePipeline({
-    resumeParent: async (_parentSessionId, runs, message) => {
-      // Wait for parent process to exit before resuming
-      const parentCompletion = pool.getCompletion(runs[0].parentSessionId);
-      if (parentCompletion) {
-        await parentCompletion;
-      }
+    resumeParent: async (parentSessionId, runs, message) => {
+      const parentCompletion = pool.getCompletion(parentSessionId);
+      if (parentCompletion) await parentCompletion;
 
-      // Route result as a system message through the router
       await rawRouter({
         channel: "system",
-        chatId: runs[0].parentSessionKey,
+        chatId: parentSessionId,
         userId: "system",
         username: "system",
         text: message,
         source: "system",
       });
 
-      // Mark all runs as announced
-      for (const run of runs) {
-        subagentRegistry.markAnnounced(run.runId);
-      }
+      for (const run of runs) subagentRegistry.markAnnounced(run.runId);
     },
   });
 
   // Spawn handler — called when a new subagent is requested via HTTP API
   const onSubagentSpawn = (run: SubagentRun) => {
     const childSystemPrompt = buildChildSystemPrompt(run.task, run.parentSessionId);
+    const timeoutMs = (run.timeoutSeconds ?? 300) * 1000;
 
-    pool.submit(
-      {
-        sessionId: run.childSessionId,
-        prompt: run.task,
-        timeout: 300_000,
-        systemPrompt: childSystemPrompt,
-        mcpConfig: config.mcp,
-        gatewayUrl,
-        gatewayToken,
-      },
-    ).then((result) => {
+    pool.submit({
+      sessionId: run.childSessionId,
+      prompt: run.task,
+      timeout: timeoutMs,
+      systemPrompt: childSystemPrompt,
+      mcpConfig: config.mcp,
+      gatewayUrl,
+      gatewayToken,
+    }).then((result) => {
       subagentRegistry.endRun(run.runId, "completed", result.text);
       const updatedRun = subagentRegistry.get(run.runId)!;
       updatedRun.usage = result.usage;
@@ -222,13 +212,11 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     }).catch((err) => {
       const errorMsg = err instanceof Error ? err.message : String(err);
       subagentRegistry.endRun(run.runId, "failed", undefined, errorMsg);
-      const updatedRun = subagentRegistry.get(run.runId)!;
-      announcePipeline.enqueue(updatedRun);
+      announcePipeline.enqueue(subagentRegistry.get(run.runId)!);
     });
 
-    // Update status to running
-    const r = subagentRegistry.get(run.runId);
-    if (r) { r.status = "running"; r.startedAt = Date.now(); }
+    run.status = "running";
+    run.startedAt = Date.now();
   };
 
   // Create auth middleware

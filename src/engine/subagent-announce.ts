@@ -102,7 +102,7 @@ export function createAnnouncePipeline(opts: AnnouncePipelineOptions) {
       for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
         try {
           await opts.resumeParent(parentSessionId, runs, message);
-          return; // success
+          return;
         } catch (err) {
           lastError = err;
           if (attempt < retryDelays.length) {
@@ -117,29 +117,25 @@ export function createAnnouncePipeline(opts: AnnouncePipelineOptions) {
     }
   }
 
+  function startTimer(parentId: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      const batch = pending.get(parentId);
+      if (batch) {
+        pending.delete(parentId);
+        flush(parentId, batch.runs);
+      }
+    }, debounceMs);
+  }
+
   function enqueue(run: SubagentRun): void {
     const parentId = run.parentSessionId;
     const existing = pending.get(parentId);
     if (existing) {
       existing.runs.push(run);
-      // Reset timer (extend debounce window)
       clearTimeout(existing.timer);
-      existing.timer = setTimeout(() => {
-        const batch = pending.get(parentId);
-        if (batch) {
-          pending.delete(parentId);
-          flush(parentId, batch.runs);
-        }
-      }, debounceMs);
+      existing.timer = startTimer(parentId);
     } else {
-      const timer = setTimeout(() => {
-        const batch = pending.get(parentId);
-        if (batch) {
-          pending.delete(parentId);
-          flush(parentId, batch.runs);
-        }
-      }, debounceMs);
-      pending.set(parentId, { runs: [run], timer });
+      pending.set(parentId, { runs: [run], timer: startTimer(parentId) });
     }
   }
 

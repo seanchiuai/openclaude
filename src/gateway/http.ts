@@ -435,7 +435,6 @@ export function createGatewayApp(ctx: GatewayContext) {
       return c.json({ error: "Child sessions cannot spawn subagents" }, 403);
     }
 
-    // Check max children
     const active = ctx.subagentRegistry.getActiveRunsForParent(callerSessionId);
     if (active.length >= MAX_CHILDREN_PER_PARENT) {
       return c.json({ error: `Max ${MAX_CHILDREN_PER_PARENT} concurrent children per parent` }, 429);
@@ -445,17 +444,16 @@ export function createGatewayApp(ctx: GatewayContext) {
     const childSessionId = `sub-${crypto.randomUUID().slice(0, 8)}`;
     const run: SubagentRun = {
       runId,
-      parentSessionKey: "",
+      parentSessionKey: callerSessionId,
       parentSessionId: callerSessionId,
       childSessionId,
       task: parsed.data.task,
       label: parsed.data.label,
+      timeoutSeconds: parsed.data.timeoutSeconds,
       status: "queued",
       createdAt: Date.now(),
     };
     ctx.subagentRegistry.register(run);
-
-    // Signal the gateway to actually spawn the child
     ctx.onSubagentSpawn?.(run);
 
     return c.json({ ok: true, runId, childSessionId, status: "accepted" });

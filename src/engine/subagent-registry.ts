@@ -25,13 +25,12 @@ export interface SubagentRun {
   usage?: TokenUsage;
   duration?: number;
   announced?: boolean;
-  announceRetryCount?: number;
+  timeoutSeconds?: number;
 }
 
 export function createSubagentRegistry(persistPath: string) {
   const runs = new Map<string, SubagentRun>();
 
-  // Load from disk on creation
   if (existsSync(persistPath)) {
     try {
       const data = JSON.parse(readFileSync(persistPath, "utf-8")) as SubagentRun[];
