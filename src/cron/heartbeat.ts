@@ -362,22 +362,12 @@ export function createHeartbeatRunner(
   let wakeDisposer: (() => void) | undefined;
   let agents: HeartbeatAgentState[] = resolveHeartbeatAgents(config);
 
-  // Duplicate suppression state (per-agent)
   const dedupeState = new Map<string, { text: string; atMs: number }>();
-
-  function getAgentActiveHours(agent: HeartbeatAgentState): ActiveHours | undefined {
-    return agent.config.activeHours ?? config.activeHours;
-  }
-
-  function getAgentTarget(agent: HeartbeatAgentState): CronDeliveryTarget | undefined {
-    return agent.config.target ?? config.target;
-  }
 
   async function runAgentOnce(agent: HeartbeatAgentState): Promise<CronRunOutcome> {
     const nowMs = (deps.nowMs ?? Date.now)();
 
-    // Active hours gate
-    if (!isWithinActiveHours(getAgentActiveHours(agent), nowMs)) {
+    if (!isWithinActiveHours(agent.config.activeHours, nowMs)) {
       emitHeartbeatEvent({ status: "skipped", reason: "Outside active hours" });
       return { status: "skipped", error: "Outside active hours" };
     }
@@ -397,8 +387,7 @@ export function createHeartbeatRunner(
       return { status: "skipped", error: "Checklist is empty" };
     }
 
-    const agentPrompt = agent.config.prompt ?? config.prompt;
-    const basePrompt = resolveHeartbeatPrompt(agentPrompt);
+    const basePrompt = resolveHeartbeatPrompt(agent.config.prompt);
     const prompt = content?.trim()
       ? `${basePrompt}\n\n${content.trim()}`
       : basePrompt;
@@ -416,7 +405,7 @@ export function createHeartbeatRunner(
       return outcome;
     }
 
-    const ackMaxChars = agent.config.ackMaxChars ?? config.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS;
+    const ackMaxChars = agent.config.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS;
     const stripped = stripHeartbeatToken(outcome.summary, { maxAckChars: ackMaxChars });
 
     if (stripped.shouldSkip) {
@@ -424,8 +413,7 @@ export function createHeartbeatRunner(
       return outcome;
     }
 
-    // Deliver non-trivial result
-    const target = getAgentTarget(agent);
+    const target = agent.config.target;
     if (target && deps.deliver) {
       const deliveryText = stripped.didStrip ? stripped.text : outcome.summary;
 
