@@ -279,41 +279,46 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     const { createSlackChannel } = await import("../channels/slack/index.js");
 
     const slack = createSlackChannel(config.channels.slack, async (msg) => {
-      const streamingReply = createStreamingReply({
-        sendText: async (text) => {
-          const result = await slack.sendText(msg.chatId, text);
-          return { messageId: result.messageId };
-        },
-        editMessage: (msgId, text) => slack.editMessage!(msg.chatId, msgId, text),
-      });
+      try {
+        const streamingReply = createStreamingReply({
+          sendText: async (text) => {
+            const result = await slack.sendText(msg.chatId, text);
+            return { messageId: result.messageId };
+          },
+          editMessage: (msgId, text) => slack.editMessage!(msg.chatId, msgId, text),
+        });
 
-      let accumulatedText = "";
-      const onEvent: OnStreamEvent = (event) => {
-        if (event.type === "text") {
-          accumulatedText += (accumulatedText ? "\n\n" : "") + event.text;
-          streamingReply.update(accumulatedText);
-        } else if (event.type === "status") {
-          streamingReply.status(event.message);
+        let accumulatedText = "";
+        const onEvent: OnStreamEvent = (event) => {
+          if (event.type === "text") {
+            accumulatedText += (accumulatedText ? "\n\n" : "") + event.text;
+            streamingReply.update(accumulatedText);
+          } else if (event.type === "status") {
+            streamingReply.status(event.message);
+          }
+        };
+
+        const response = await router({
+          channel: msg.channel,
+          chatId: msg.chatId,
+          userId: msg.userId,
+          username: msg.username,
+          text: msg.text,
+          source: msg.source as "user" | "cron" | "system",
+        }, onEvent);
+
+        if (response && msg.chatId) {
+          if (accumulatedText && !streamingReply.failed()) {
+            await streamingReply.finalize(response);
+          } else {
+            await slack.sendText(msg.chatId, response);
+          }
         }
-      };
-
-      const response = await router({
-        channel: msg.channel,
-        chatId: msg.chatId,
-        userId: msg.userId,
-        username: msg.username,
-        text: msg.text,
-        source: msg.source as "user" | "cron" | "system",
-      }, onEvent);
-
-      if (response && msg.chatId) {
-        if (accumulatedText && !streamingReply.failed()) {
-          await streamingReply.finalize(response);
-        } else {
-          await slack.sendText(msg.chatId, response);
-        }
+        return response;
+      } catch (err) {
+        log.error("Slack handler error", { error: err instanceof Error ? err.message : String(err), chatId: msg.chatId });
+        return `Error: ${err instanceof Error ? err.message : String(err)}`;
       }
-      return response;
     });
     await slack.start();
     channels.set("slack", slack);

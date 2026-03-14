@@ -164,11 +164,15 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent, options?: 
           }
 
           if (classified.kind === "assistant" && onEvent) {
-            for (const text of classified.textBlocks) {
-              onEvent({ type: "text", text });
-            }
-            for (const name of classified.toolUseNames) {
-              onEvent({ type: "status", message: `[Using tool: ${name}]` });
+            try {
+              for (const text of classified.textBlocks) {
+                onEvent({ type: "text", text });
+              }
+              for (const name of classified.toolUseNames) {
+                onEvent({ type: "status", message: `[Using tool: ${name}]` });
+              }
+            } catch {
+              // Don't let streaming callback errors crash the spawn promise
             }
           }
         } catch {

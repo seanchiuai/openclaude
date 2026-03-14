@@ -20,7 +20,11 @@ interface QueuedTask {
   reject: (error: Error) => void;
   onEvent?: OnStreamEvent;
   spawnOptions?: SpawnOptions;
+  queueTimer?: ReturnType<typeof setTimeout>;
 }
+
+const MAX_QUEUE_DEPTH = 20;
+const QUEUE_TIMEOUT_MS = 120_000; // 2 minutes waiting in queue
 
 export function createProcessPool(maxConcurrent = 4) {
   const running = new Map<string, ClaudeSession>();
@@ -40,6 +44,7 @@ export function createProcessPool(maxConcurrent = 4) {
     if (draining) return;
     while (running.size < maxConcurrent && queue.length > 0) {
       const queued = queue.shift()!;
+      if (queued.queueTimer) clearTimeout(queued.queueTimer);
       executeTask(queued);
     }
   }
@@ -81,6 +86,10 @@ export function createProcessPool(maxConcurrent = 4) {
       return Promise.reject(new Error("Pool is draining, cannot accept tasks"));
     }
 
+    if (running.size >= maxConcurrent && queue.length >= MAX_QUEUE_DEPTH) {
+      return Promise.reject(new Error("Queue full — too many pending requests"));
+    }
+
     return new Promise<ClaudeResult>((resolve, reject) => {
       const queued: QueuedTask = { task, resolve, reject, onEvent, spawnOptions };
 
@@ -88,6 +97,17 @@ export function createProcessPool(maxConcurrent = 4) {
         executeTask(queued);
       } else {
         onEvent?.({ type: "queued", position: queue.length + 1 });
+
+        // Timeout for tasks waiting in queue
+        const timer = setTimeout(() => {
+          const idx = queue.indexOf(queued);
+          if (idx !== -1) {
+            queue.splice(idx, 1);
+            reject(new Error(`Queued task ${task.sessionId} timed out after ${QUEUE_TIMEOUT_MS}ms waiting for a pool slot`));
+          }
+        }, QUEUE_TIMEOUT_MS);
+        queued.queueTimer = timer;
+
         queue.push(queued);
       }
     });
@@ -123,6 +143,7 @@ export function createProcessPool(maxConcurrent = 4) {
     for (let i = queue.length - 1; i >= 0; i--) {
       if (queue[i].task.sessionId === sessionId) {
         const [entry] = queue.splice(i, 1);
+        if (entry.queueTimer) clearTimeout(entry.queueTimer);
         entry.reject(new Error("Session stopped"));
         removed++;
       }
@@ -155,8 +176,9 @@ export function createProcessPool(maxConcurrent = 4) {
   async function drain(): Promise<void> {
     draining = true;
 
-    // Reject all queued tasks
+    // Reject all queued tasks and clear their timers
     for (const queued of queue.splice(0)) {
+      if (queued.queueTimer) clearTimeout(queued.queueTimer);
       queued.reject(new Error("Pool draining"));
     }
 
