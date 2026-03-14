@@ -18,11 +18,12 @@ export function ensureMemoryIndexSchema(params: {
   `);
   params.db.exec(`
     CREATE TABLE IF NOT EXISTS files (
-      path TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
       source TEXT NOT NULL DEFAULT 'memory',
       hash TEXT NOT NULL,
       mtime INTEGER NOT NULL,
-      size INTEGER NOT NULL
+      size INTEGER NOT NULL,
+      PRIMARY KEY (path, source)
     );
   `);
   params.db.exec(`
@@ -82,6 +83,7 @@ export function ensureMemoryIndexSchema(params: {
   ensureColumn(params.db, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'");
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);`);
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_model ON chunks(model);`);
 
   return { ftsAvailable, ...(ftsError ? { ftsError } : {}) };
 }

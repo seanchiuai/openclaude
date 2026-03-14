@@ -955,7 +955,7 @@ export function createMemoryManager(config: MemoryManagerConfig): MemoryManager 
       db.prepare(
         `INSERT INTO files (path, source, hash, mtime, size)
          VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(path) DO UPDATE SET
+         ON CONFLICT(path, source) DO UPDATE SET
            hash = excluded.hash,
            mtime = excluded.mtime,
            size = excluded.size`,

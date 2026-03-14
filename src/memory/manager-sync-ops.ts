@@ -228,6 +228,7 @@ export abstract class MemoryManagerSyncOps {
     const { DatabaseSync } = requireNodeSqlite();
     const db = new DatabaseSync(dbPath, { allowExtension: this.memoryConfig.store.vector.enabled });
     db.exec("PRAGMA busy_timeout = 5000");
+    db.exec("PRAGMA journal_mode = WAL");
     return db;
   }
 
