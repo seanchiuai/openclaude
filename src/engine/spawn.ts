@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paths } from "../config/paths.js";
+import { classifyEvent } from "./event-schema.js";
 import type { AgentTask, ClaudeResult, ClaudeSession, OnStreamEvent, SpawnOptions, TokenUsage } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -138,51 +139,36 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent, options?: 
           const event = JSON.parse(trimmed) as Record<string, unknown>;
           rawEvents.push(event);
 
-          // Extract session_id eagerly from init event
-          if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
-            streamSessionId = event.session_id;
+          const classified = classifyEvent(event);
+
+          if (classified.kind === "init") {
+            streamSessionId = classified.sessionId;
           }
 
-          // Extract token usage from result event
-          if (event.type === "result") {
-            const u = event.usage as Record<string, unknown> | undefined;
-            if (u) {
-              usage = {
-                inputTokens: (u.input_tokens as number) ?? 0,
-                outputTokens: (u.output_tokens as number) ?? 0,
-                cacheReadTokens: (u.cache_read_input_tokens as number) ?? 0,
-                cacheCreationTokens: (u.cache_creation_input_tokens as number) ?? 0,
-                totalCostUsd: (event.total_cost_usd as number) ?? 0,
-              };
+          if (classified.kind === "result") {
+            if (classified.usage) {
+              usage = classified.usage;
               if (onEvent) {
                 onEvent({ type: "usage", inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd: usage.totalCostUsd });
               }
             }
-            numTurns = (event.num_turns as number) ?? undefined;
+            numTurns = classified.numTurns;
           }
 
-          // Detect auto-compaction boundary
-          if (event.type === "system" && event.subtype === "compact_boundary") {
+          if (classified.kind === "compaction") {
             compacted = true;
-            const metadata = event.compact_metadata as Record<string, unknown> | undefined;
-            preCompactTokens = (metadata?.pre_tokens as number) ?? undefined;
+            preCompactTokens = classified.preTokens;
             if (onEvent && typeof preCompactTokens === "number") {
               onEvent({ type: "compaction", preTokens: preCompactTokens });
             }
           }
 
-          // Stream assistant text events to callback
-          if (event.type === "assistant" && onEvent) {
-            const content = (event as Record<string, unknown>).content as Array<Record<string, unknown>> | undefined
-              ?? ((event as Record<string, unknown>).message as Record<string, unknown> | undefined)?.content as Array<Record<string, unknown>> | undefined;
-            if (Array.isArray(content)) {
-              for (const block of content) {
-                if (block.type === "text" && typeof block.text === "string") {
-                  onEvent({ type: "text", text: block.text });
-                } else if (block.type === "tool_use" && typeof block.name === "string") {
-                  onEvent({ type: "status", message: `[Using tool: ${block.name}]` });
-                }
-              }
+          if (classified.kind === "assistant" && onEvent) {
+            for (const text of classified.textBlocks) {
+              onEvent({ type: "text", text });
+            }
+            for (const name of classified.toolUseNames) {
+              onEvent({ type: "status", message: `[Using tool: ${name}]` });
             }
           }
         } catch {
@@ -212,8 +198,9 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent, options?: 
         try {
           const event = JSON.parse(lineBuf.trim()) as Record<string, unknown>;
           rawEvents.push(event);
-          if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
-            streamSessionId = event.session_id;
+          const classified = classifyEvent(event);
+          if (classified.kind === "init") {
+            streamSessionId = classified.sessionId;
           }
         } catch {
           // Not JSON

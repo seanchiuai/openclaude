@@ -7,6 +7,7 @@ import { paths } from "../config/paths.js";
 import { ensureDirectories, loadConfig } from "../config/loader.js";
 import { createLogger } from "../logging/logger.js";
 import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat, markActivity } from "../logging/diagnostic.js";
+import { checkClaudeCliVersion } from "../engine/cli-version.js";
 import { createProcessPool } from "../engine/pool.js";
 import { createGatewayApp, startHttpServer } from "./http.js";
 import { createAuthMiddleware } from "./auth.js";
@@ -45,6 +46,10 @@ const log = createLogger("gateway");
 
 export async function startGateway(configPath?: string): Promise<Gateway> {
   ensureDirectories();
+
+  // Verify Claude Code CLI is available before starting anything
+  const cliVersion = checkClaudeCliVersion();
+  log.info(`Claude Code CLI: ${cliVersion.raw}`);
 
   const config = loadConfig(configPath);
   const pool = createProcessPool(config.agent.maxConcurrent);
