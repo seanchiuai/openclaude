@@ -5,7 +5,7 @@
  * agentic turns. Instead, shouldFlushMemory() is checked between turns
  * and flushSessionToMemory() writes facts to disk directly.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, appendFile, access } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChatSession } from "../router/types.js";
 
@@ -79,8 +79,17 @@ export function extractKeyFacts(transcript: string): string[] {
 }
 
 /**
+ * Module-level mutex to serialize concurrent flushSessionToMemory calls,
+ * preventing a read-then-write race condition on the dated markdown file.
+ */
+let flushLock: Promise<void> = Promise.resolve();
+
+/**
  * Write extracted facts from a session transcript to a dated markdown file.
  * Appends to existing file if it exists (never overwrites).
+ *
+ * Uses a module-level mutex to prevent concurrent calls from losing writes
+ * in the read-then-write sequence.
  */
 export async function flushSessionToMemory(
   transcript: string,
@@ -91,28 +100,39 @@ export async function flushSessionToMemory(
     return { flushed: false };
   }
 
-  await mkdir(deps.memoryDir, { recursive: true });
+  const prev = flushLock;
+  let resolve: () => void;
+  flushLock = new Promise((r) => {
+    resolve = r;
+  });
+  await prev;
 
-  const dateStr = todayDateString();
-  const filePath = join(deps.memoryDir, `${dateStr}.md`);
-
-  const factsBlock = facts.map((f) => `- ${f}`).join("\n") + "\n";
-
-  let existing = "";
   try {
-    existing = await readFile(filePath, "utf-8");
-  } catch {
-    // file doesn't exist yet
+    await mkdir(deps.memoryDir, { recursive: true });
+
+    const dateStr = todayDateString();
+    const filePath = join(deps.memoryDir, `${dateStr}.md`);
+
+    const factsBlock = facts.map((f) => `- ${f}`).join("\n") + "\n";
+
+    let existing = "";
+    try {
+      existing = await readFile(filePath, "utf-8");
+    } catch {
+      // file doesn't exist yet
+    }
+
+    if (existing) {
+      await writeFile(filePath, existing + "\n" + factsBlock);
+    } else {
+      const header = `# Session Notes ${dateStr}\n\n`;
+      await writeFile(filePath, header + factsBlock);
+    }
+
+    await deps.syncFn();
+
+    return { flushed: true, path: filePath };
+  } finally {
+    resolve!();
   }
-
-  if (existing) {
-    await writeFile(filePath, existing + "\n" + factsBlock);
-  } else {
-    const header = `# Session Notes ${dateStr}\n\n`;
-    await writeFile(filePath, header + factsBlock);
-  }
-
-  await deps.syncFn();
-
-  return { flushed: true, path: filePath };
 }
