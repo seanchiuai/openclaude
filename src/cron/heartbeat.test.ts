@@ -10,12 +10,14 @@ import {
   stripHeartbeatToken,
   resolveHeartbeatPrompt,
   createHeartbeatRunner,
+  resolveHeartbeatAgents,
   HEARTBEAT_TOKEN,
   HEARTBEAT_PROMPT,
   DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
   type HeartbeatConfig,
   type HeartbeatDeps,
 } from "./heartbeat.js";
+import { resetHeartbeatWakeStateForTests } from "./heartbeat-wake.js";
 
 // ── HEARTBEAT_OK token detection ──
 
@@ -183,6 +185,7 @@ describe("createHeartbeatRunner", () => {
   });
 
   afterEach(() => {
+    resetHeartbeatWakeStateForTests();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -439,5 +442,107 @@ describe("createHeartbeatRunner", () => {
     expect(runner.isRunning()).toBe(true);
     runner.stop();
     expect(runner.isRunning()).toBe(false);
+  });
+
+  // ── Multi-agent tests ──
+
+  it("resolveHeartbeatAgents produces single default agent when no agents configured", () => {
+    const agents = resolveHeartbeatAgents(makeConfig());
+    expect(agents).toHaveLength(1);
+    expect(agents[0].agentId).toBe("default");
+    expect(agents[0].intervalMs).toBe(60_000);
+  });
+
+  it("resolveHeartbeatAgents merges agent configs with top-level defaults", () => {
+    const agents = resolveHeartbeatAgents(
+      makeConfig({
+        prompt: "top-level prompt",
+        ackMaxChars: 200,
+        agents: [
+          { id: "ops", every: 30_000 },
+          { id: "monitor", prompt: "monitor prompt" },
+        ],
+      }),
+    );
+    expect(agents).toHaveLength(2);
+
+    expect(agents[0].agentId).toBe("ops");
+    expect(agents[0].intervalMs).toBe(30_000);
+    expect(agents[0].config.prompt).toBe("top-level prompt");
+    expect(agents[0].config.ackMaxChars).toBe(200);
+
+    expect(agents[1].agentId).toBe("monitor");
+    expect(agents[1].intervalMs).toBe(60_000);
+    expect(agents[1].config.prompt).toBe("monitor prompt");
+  });
+
+  it("runs specific agent by ID", async () => {
+    writeFileSync(checklistPath, "- [ ] Check disk");
+
+    let capturedPrompt = "";
+    const deps = makeDeps({
+      runIsolated: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return { status: "ok" as const, summary: HEARTBEAT_TOKEN };
+      },
+    });
+
+    const runner = createHeartbeatRunner(
+      makeConfig({
+        agents: [
+          { id: "ops", prompt: "Ops agent prompt" },
+          { id: "monitor", prompt: "Monitor agent prompt" },
+        ],
+      }),
+      deps,
+    );
+
+    await runner.runOnce("monitor");
+    expect(capturedPrompt).toContain("Monitor agent prompt");
+  });
+
+  it("updateConfig preserves lastRunMs for surviving agents", async () => {
+    writeFileSync(checklistPath, "- [ ] Check disk");
+
+    const runner = createHeartbeatRunner(
+      makeConfig({
+        agents: [
+          { id: "ops", every: 30_000 },
+          { id: "monitor", every: 60_000 },
+        ],
+      }),
+      makeDeps(),
+    );
+    runner.start();
+
+    // Run ops agent to set its lastRunMs
+    await runner.runOnce("ops");
+
+    // Update config — ops survives, monitor is replaced by new-monitor
+    runner.updateConfig(
+      makeConfig({
+        agents: [
+          { id: "ops", every: 45_000 },
+          { id: "new-monitor", every: 120_000 },
+        ],
+      }),
+    );
+
+    // Ops agent should keep its lastRunMs
+    const result = await runner.runOnce("ops");
+    expect(result.status).toBe("ok");
+
+    // new-monitor should exist
+    const result2 = await runner.runOnce("new-monitor");
+    expect(result2.status).toBe("ok");
+
+    runner.stop();
+  });
+
+  it("returns error for unknown agent ID", async () => {
+    const runner = createHeartbeatRunner(makeConfig(), makeDeps());
+    const result = await runner.runOnce("nonexistent");
+    expect(result.status).toBe("skipped");
+    expect(result.error).toContain("Unknown agent");
   });
 });

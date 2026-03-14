@@ -488,6 +488,67 @@ describe("CronService", () => {
     svc.stop();
   });
 
+  it("onJobComplete fires after successful job execution", async () => {
+    const onJobComplete = vi.fn();
+    const runIsolatedJob = vi.fn<(job: CronJob) => Promise<CronRunOutcome>>(
+      async () => ({
+        status: "ok",
+        summary: "done",
+        durationMs: 10,
+      }),
+    );
+
+    const svc = createCronService({
+      storePath,
+      runIsolatedJob,
+      onJobComplete,
+    });
+    svc.start();
+    await tick();
+
+    const job = svc.add({
+      name: "callback-test",
+      schedule: { kind: "every", everyMs: 60_000 },
+      prompt: "test",
+    });
+
+    await svc.run(job.id);
+
+    expect(onJobComplete).toHaveBeenCalledOnce();
+    expect(onJobComplete.mock.calls[0][0].id).toBe(job.id);
+    expect(onJobComplete.mock.calls[0][1].status).toBe("ok");
+
+    svc.stop();
+  });
+
+  it("onJobComplete fires on error too", async () => {
+    const onJobComplete = vi.fn();
+    const runIsolatedJob = vi.fn<(job: CronJob) => Promise<CronRunOutcome>>(
+      async () => { throw new Error("fail"); },
+    );
+
+    const svc = createCronService({
+      storePath,
+      runIsolatedJob,
+      onJobComplete,
+    });
+    svc.start();
+    await tick();
+
+    const job = svc.add({
+      name: "error-callback",
+      schedule: { kind: "every", everyMs: 60_000 },
+      prompt: "test",
+    });
+
+    await svc.run(job.id);
+
+    expect(onJobComplete).toHaveBeenCalledOnce();
+    expect(onJobComplete.mock.calls[0][1].status).toBe("error");
+
+    svc.stop();
+  });
+
   it("does NOT affect jobs with no runningAtMs", async () => {
     const store: CronStore = {
       version: 1,

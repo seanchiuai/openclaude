@@ -17,6 +17,7 @@ export interface CronServiceDeps {
   storePath: string;
   runIsolatedJob: (job: CronJob) => Promise<CronRunOutcome>;
   deliverResult?: (target: CronDeliveryTarget, text: string) => Promise<void>;
+  onJobComplete?: (job: CronJob, outcome: CronRunOutcome) => void;
 }
 
 export interface CronService {
@@ -163,6 +164,15 @@ export function createCronService(deps: CronServiceDeps): CronService {
     job.updatedAt = endMs;
 
     await save();
+
+    // Notify completion callback
+    if (deps.onJobComplete) {
+      try {
+        deps.onJobComplete(job, outcome);
+      } catch {
+        // onJobComplete failure is non-fatal
+      }
+    }
 
     // Deliver result if configured
     if (

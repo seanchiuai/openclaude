@@ -27,6 +27,15 @@ export interface AgentConfig {
   model?: string;
 }
 
+export interface HeartbeatAgentConfig {
+  id: string;
+  every?: number;
+  prompt?: string;
+  ackMaxChars?: number;
+  target?: { channel: "telegram" | "slack"; chatId: string };
+  activeHours?: { start: string; end: string; timezone?: string };
+}
+
 export interface HeartbeatConfig {
   enabled: boolean;
   every: number;
@@ -41,6 +50,7 @@ export interface HeartbeatConfig {
     end: string;
     timezone?: string;
   };
+  agents?: HeartbeatAgentConfig[];
 }
 
 export interface McpServerConfig {

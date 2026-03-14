@@ -9,6 +9,8 @@
  * - Active hours / quiet hours support
  * - Duplicate suppression (same message within 24h)
  * - ackMaxChars threshold for short ok-adjacent responses
+ * - Multi-agent scheduling with per-agent intervals
+ * - Wake integration for event-driven heartbeats
  *
  * Divergence from OpenClaw: execution delegates to Claude Code CLI via
  * deps.runIsolated() rather than OpenClaw's internal agent system.
@@ -16,6 +18,9 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import type { CronDeliveryTarget, CronRunOutcome } from "./types.js";
+import type { HeartbeatAgentConfig } from "../config/types.js";
+import { setHeartbeatWakeHandler } from "./heartbeat-wake.js";
+import { emitHeartbeatEvent } from "./heartbeat-events.js";
 
 // ── Token & prompt constants (from openclaw-source/src/auto-reply/tokens.ts + heartbeat.ts) ──
 
@@ -274,6 +279,7 @@ export interface HeartbeatConfig {
   ackMaxChars?: number;
   target?: CronDeliveryTarget;
   activeHours?: ActiveHours;
+  agents?: HeartbeatAgentConfig[];
 }
 
 export interface HeartbeatDeps {
@@ -285,113 +291,279 @@ export interface HeartbeatDeps {
 export interface HeartbeatRunner {
   start(): void;
   stop(): void;
-  runOnce(): Promise<CronRunOutcome>;
+  runOnce(agentId?: string): Promise<CronRunOutcome>;
   isRunning(): boolean;
+  updateConfig(config: HeartbeatConfig): void;
 }
 
 /** Duplicate suppression window — same as OpenClaw (24 hours). */
 const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+// ── Multi-agent state ──
+
+export interface HeartbeatAgentState {
+  agentId: string;
+  config: HeartbeatAgentConfig;
+  intervalMs: number;
+  lastRunMs?: number;
+  nextDueMs: number;
+}
+
+/**
+ * Resolve heartbeat agents from config. If `config.agents` is set, merge each
+ * agent with top-level defaults. If absent, produce a single "default" agent.
+ */
+export function resolveHeartbeatAgents(config: HeartbeatConfig): HeartbeatAgentState[] {
+  const nowMs = Date.now();
+  if (config.agents && config.agents.length > 0) {
+    return config.agents.map((agentCfg) => {
+      const intervalMs = agentCfg.every ?? config.every;
+      return {
+        agentId: agentCfg.id,
+        config: {
+          id: agentCfg.id,
+          every: agentCfg.every ?? config.every,
+          prompt: agentCfg.prompt ?? config.prompt,
+          ackMaxChars: agentCfg.ackMaxChars ?? config.ackMaxChars,
+          target: agentCfg.target ?? config.target,
+          activeHours: agentCfg.activeHours ?? config.activeHours,
+        },
+        intervalMs,
+        nextDueMs: nowMs + intervalMs,
+      };
+    });
+  }
+
+  return [
+    {
+      agentId: "default",
+      config: {
+        id: "default",
+        every: config.every,
+        prompt: config.prompt,
+        ackMaxChars: config.ackMaxChars,
+        target: config.target,
+        activeHours: config.activeHours,
+      },
+      intervalMs: config.every,
+      nextDueMs: nowMs + config.every,
+    },
+  ];
+}
+
 export function createHeartbeatRunner(
-  config: HeartbeatConfig,
+  initialConfig: HeartbeatConfig,
   deps: HeartbeatDeps,
 ): HeartbeatRunner {
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let config = initialConfig;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let running = false;
   let executing = false;
+  let wakeDisposer: (() => void) | undefined;
+  let agents: HeartbeatAgentState[] = resolveHeartbeatAgents(config);
 
-  // Duplicate suppression state
-  let lastDeliveredText: string | undefined;
-  let lastDeliveredAtMs: number | undefined;
+  // Duplicate suppression state (per-agent)
+  const dedupeState = new Map<string, { text: string; atMs: number }>();
 
-  async function runOnce(): Promise<CronRunOutcome> {
+  function getAgentActiveHours(agent: HeartbeatAgentState): ActiveHours | undefined {
+    return agent.config.activeHours ?? config.activeHours;
+  }
+
+  function getAgentTarget(agent: HeartbeatAgentState): CronDeliveryTarget | undefined {
+    return agent.config.target ?? config.target;
+  }
+
+  async function runAgentOnce(agent: HeartbeatAgentState): Promise<CronRunOutcome> {
+    const nowMs = (deps.nowMs ?? Date.now)();
+
+    // Active hours gate
+    if (!isWithinActiveHours(getAgentActiveHours(agent), nowMs)) {
+      emitHeartbeatEvent({ status: "skipped", reason: "Outside active hours" });
+      return { status: "skipped", error: "Outside active hours" };
+    }
+
+    if (!existsSync(config.checklistPath)) {
+      // Missing file is not an error — the prompt already says "if it exists".
+    }
+
+    let content: string | undefined;
+    if (existsSync(config.checklistPath)) {
+      content = readFileSync(config.checklistPath, "utf-8");
+    }
+
+    // Skip if checklist exists but is effectively empty
+    if (content !== undefined && isHeartbeatContentEffectivelyEmpty(content)) {
+      emitHeartbeatEvent({ status: "skipped", reason: "Checklist is empty" });
+      return { status: "skipped", error: "Checklist is empty" };
+    }
+
+    const agentPrompt = agent.config.prompt ?? config.prompt;
+    const basePrompt = resolveHeartbeatPrompt(agentPrompt);
+    const prompt = content?.trim()
+      ? `${basePrompt}\n\n${content.trim()}`
+      : basePrompt;
+
+    const startMs = Date.now();
+    const outcome = await deps.runIsolated(prompt);
+    const durationMs = Date.now() - startMs;
+
+    if (outcome.status !== "ok" || !outcome.summary) {
+      emitHeartbeatEvent({
+        status: outcome.status === "ok" ? "ok-empty" : "failed",
+        durationMs,
+        reason: agent.agentId,
+      });
+      return outcome;
+    }
+
+    const ackMaxChars = agent.config.ackMaxChars ?? config.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS;
+    const stripped = stripHeartbeatToken(outcome.summary, { maxAckChars: ackMaxChars });
+
+    if (stripped.shouldSkip) {
+      emitHeartbeatEvent({ status: "ok-token", durationMs, reason: agent.agentId });
+      return outcome;
+    }
+
+    // Deliver non-trivial result
+    const target = getAgentTarget(agent);
+    if (target && deps.deliver) {
+      const deliveryText = stripped.didStrip ? stripped.text : outcome.summary;
+
+      // Duplicate suppression per agent
+      const prev = dedupeState.get(agent.agentId);
+      const isDuplicate =
+        prev !== undefined &&
+        deliveryText.trim() === prev.text.trim() &&
+        nowMs - prev.atMs < DEDUPE_WINDOW_MS;
+
+      if (!isDuplicate) {
+        await deps.deliver(target, deliveryText);
+        dedupeState.set(agent.agentId, { text: deliveryText, atMs: nowMs });
+        emitHeartbeatEvent({
+          status: "sent",
+          durationMs,
+          preview: deliveryText.slice(0, 80),
+          reason: agent.agentId,
+          channel: target.channel,
+        });
+      }
+    } else {
+      emitHeartbeatEvent({ status: "sent", durationMs, reason: agent.agentId });
+    }
+
+    return outcome;
+  }
+
+  async function runOnce(agentId?: string): Promise<CronRunOutcome> {
     if (executing) {
       return { status: "skipped", error: "Already executing" };
     }
 
     executing = true;
     try {
-      const nowMs = (deps.nowMs ?? Date.now)();
-
-      // Active hours gate
-      if (!isWithinActiveHours(config.activeHours, nowMs)) {
-        return { status: "skipped", error: "Outside active hours" };
-      }
-
-      if (!existsSync(config.checklistPath)) {
-        // Missing file is not an error — the prompt already says "if it exists".
-        // Still run the heartbeat so the model can check other things.
-      }
-
-      let content: string | undefined;
-      if (existsSync(config.checklistPath)) {
-        content = readFileSync(config.checklistPath, "utf-8");
-      }
-
-      // Skip if checklist exists but is effectively empty (only headers/empty items)
-      if (content !== undefined && isHeartbeatContentEffectivelyEmpty(content)) {
-        return { status: "skipped", error: "Checklist is empty" };
-      }
-
-      const basePrompt = resolveHeartbeatPrompt(config.prompt);
-      const prompt = content?.trim()
-        ? `${basePrompt}\n\n${content.trim()}`
-        : basePrompt;
-
-      const outcome = await deps.runIsolated(prompt);
-
-      if (outcome.status !== "ok" || !outcome.summary) {
-        return outcome;
-      }
-
-      // Strip HEARTBEAT_OK token — matches OpenClaw's behavior
-      const stripped = stripHeartbeatToken(outcome.summary, {
-        maxAckChars: config.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
-      });
-
-      // If response is just the ok token (or short ack), nothing to deliver
-      if (stripped.shouldSkip) {
-        return outcome;
-      }
-
-      // Deliver non-trivial result
-      if (config.target && deps.deliver) {
-        const deliveryText = stripped.didStrip ? stripped.text : outcome.summary;
-
-        // Duplicate suppression: don't nag with same message within 24h
-        const isDuplicate =
-          lastDeliveredText !== undefined &&
-          lastDeliveredAtMs !== undefined &&
-          deliveryText.trim() === lastDeliveredText.trim() &&
-          nowMs - lastDeliveredAtMs < DEDUPE_WINDOW_MS;
-
-        if (!isDuplicate) {
-          await deps.deliver(config.target, deliveryText);
-          lastDeliveredText = deliveryText;
-          lastDeliveredAtMs = nowMs;
+      if (agentId) {
+        const agent = agents.find((a) => a.agentId === agentId);
+        if (!agent) {
+          return { status: "skipped", error: `Unknown agent: ${agentId}` };
         }
+        const result = await runAgentOnce(agent);
+        agent.lastRunMs = (deps.nowMs ?? Date.now)();
+        agent.nextDueMs = agent.lastRunMs + agent.intervalMs;
+        return result;
       }
 
-      return outcome;
+      // Run all agents (first agent used as default for backward compat)
+      const firstAgent = agents[0];
+      if (!firstAgent) {
+        return { status: "skipped", error: "No agents configured" };
+      }
+      const result = await runAgentOnce(firstAgent);
+      firstAgent.lastRunMs = (deps.nowMs ?? Date.now)();
+      firstAgent.nextDueMs = firstAgent.lastRunMs + firstAgent.intervalMs;
+      return result;
     } finally {
       executing = false;
     }
+  }
+
+  /** Run only due agents — used by the scheduler timer. */
+  async function runDueAgents(): Promise<void> {
+    if (executing) return;
+    executing = true;
+    try {
+      const nowMs = (deps.nowMs ?? Date.now)();
+      for (const agent of agents) {
+        if (agent.nextDueMs <= nowMs) {
+          await runAgentOnce(agent);
+          agent.lastRunMs = (deps.nowMs ?? Date.now)();
+          agent.nextDueMs = agent.lastRunMs + agent.intervalMs;
+        }
+      }
+    } finally {
+      executing = false;
+    }
+  }
+
+  function scheduleNext() {
+    if (!running) return;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+
+    const nowMs = Date.now();
+    let earliestDue = Infinity;
+    for (const agent of agents) {
+      if (agent.nextDueMs < earliestDue) {
+        earliestDue = agent.nextDueMs;
+      }
+    }
+
+    if (!Number.isFinite(earliestDue)) return;
+
+    const delay = Math.max(0, earliestDue - nowMs);
+    timer = setTimeout(() => {
+      timer = undefined;
+      void (async () => {
+        await runDueAgents();
+        scheduleNext();
+      })();
+    }, delay);
   }
 
   return {
     start() {
       if (running) return;
       running = true;
-      timer = setInterval(() => {
-        void runOnce();
-      }, config.every);
+      agents = resolveHeartbeatAgents(config);
+      scheduleNext();
+
+      // Register wake handler
+      wakeDisposer = setHeartbeatWakeHandler(async (opts) => {
+        if (executing) {
+          return { status: "skipped" as const, reason: "requests-in-flight" };
+        }
+        const result = await runOnce(opts.agentId);
+        scheduleNext();
+        if (result.status === "ok") {
+          return { status: "ran" as const, durationMs: 0 };
+        }
+        if (result.status === "skipped") {
+          return { status: "skipped" as const, reason: result.error ?? "skipped" };
+        }
+        return { status: "failed" as const, reason: result.error ?? "failed" };
+      });
     },
 
     stop() {
       running = false;
       if (timer !== undefined) {
-        clearInterval(timer);
+        clearTimeout(timer);
         timer = undefined;
+      }
+      if (wakeDisposer) {
+        wakeDisposer();
+        wakeDisposer = undefined;
       }
     },
 
@@ -399,6 +571,25 @@ export function createHeartbeatRunner(
 
     isRunning() {
       return running;
+    },
+
+    updateConfig(newConfig: HeartbeatConfig) {
+      const oldAgents = agents;
+      config = newConfig;
+      agents = resolveHeartbeatAgents(newConfig);
+
+      // Preserve lastRunMs for agents that survived the config change
+      for (const newAgent of agents) {
+        const old = oldAgents.find((a) => a.agentId === newAgent.agentId);
+        if (old?.lastRunMs) {
+          newAgent.lastRunMs = old.lastRunMs;
+          newAgent.nextDueMs = old.lastRunMs + newAgent.intervalMs;
+        }
+      }
+
+      if (running) {
+        scheduleNext();
+      }
     },
   };
 }

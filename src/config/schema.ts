@@ -29,6 +29,26 @@ export const AgentSchema = z.object({
   model: z.string().optional(),
 });
 
+export const HeartbeatAgentSchema = z.object({
+  id: z.string().min(1),
+  every: z.number().int().min(60_000).optional(),
+  prompt: z.string().optional(),
+  ackMaxChars: z.number().int().min(0).optional(),
+  target: z
+    .object({
+      channel: z.enum(["telegram", "slack"]),
+      chatId: z.string(),
+    })
+    .optional(),
+  activeHours: z
+    .object({
+      start: z.string(),
+      end: z.string(),
+      timezone: z.string().optional(),
+    })
+    .optional(),
+});
+
 export const HeartbeatSchema = z.object({
   enabled: z.boolean().default(false),
   every: z.number().int().min(60_000).default(1_800_000),
@@ -47,6 +67,7 @@ export const HeartbeatSchema = z.object({
       timezone: z.string().optional(),
     })
     .optional(),
+  agents: z.array(HeartbeatAgentSchema).optional(),
 });
 
 export const McpServerSchema = z.object({
