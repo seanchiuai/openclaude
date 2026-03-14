@@ -136,7 +136,10 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
         enabled: true,
         every: config.heartbeat.every,
         checklistPath: paths.heartbeat,
+        prompt: config.heartbeat.prompt,
+        ackMaxChars: config.heartbeat.ackMaxChars,
         target: config.heartbeat.target,
+        activeHours: config.heartbeat.activeHours,
       },
       {
         runIsolated: async (prompt) => {

@@ -32,10 +32,19 @@ export const AgentSchema = z.object({
 export const HeartbeatSchema = z.object({
   enabled: z.boolean().default(false),
   every: z.number().int().min(60_000).default(1_800_000),
+  prompt: z.string().optional(),
+  ackMaxChars: z.number().int().min(0).default(300),
   target: z
     .object({
       channel: z.enum(["telegram", "slack"]),
       chatId: z.string(),
+    })
+    .optional(),
+  activeHours: z
+    .object({
+      start: z.string(),
+      end: z.string(),
+      timezone: z.string().optional(),
     })
     .optional(),
 });
