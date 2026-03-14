@@ -17,6 +17,7 @@ import {
   buildTelegramStatusReactionVariants,
   resolveTelegramReactionVariant,
 } from "./status-reaction-variants.js";
+import { createStreamingReply } from "../streaming.js";
 import type {
   ChannelAdapter,
   InboundMessage,
@@ -24,6 +25,7 @@ import type {
   MessageHandler,
   SendResult,
 } from "../types.js";
+import type { OnStreamEvent, StreamEvent } from "../../engine/types.js";
 import type { TelegramChannelConfig } from "../../config/types.js";
 
 /** Backoff policy extracted from OpenClaw's polling-session.ts */
@@ -82,7 +84,7 @@ export function createTelegramChannel(
   async function withTypingAndReactions(
     chatId: string,
     messageId: number,
-    handler: () => Promise<string>,
+    handler: (onEvent?: OnStreamEvent) => Promise<string>,
   ): Promise<void> {
     const reactionController = createStatusReactionController({
       enabled: true,
@@ -109,12 +111,45 @@ export function createTelegramChannel(
     });
     await typing.onReplyStart();
 
+    // Create streaming reply for edit-in-place updates
+    const streamingReply = createStreamingReply({
+      sendText: async (text) => {
+        const result = await sendText(bot, chatId, text);
+        return { messageId: result.messageId };
+      },
+      editMessage: (msgId, text) => editMessageText(chatId, msgId, text),
+    });
+
+    // Accumulate text across multiple assistant events
+    let accumulatedText = "";
+
+    // Build onEvent callback that forwards to streaming reply + reaction controller
+    const onEvent: OnStreamEvent = (event: StreamEvent) => {
+      if (event.type === "text") {
+        accumulatedText += (accumulatedText ? "\n\n" : "") + event.text;
+        streamingReply.update(accumulatedText);
+      } else if (event.type === "status") {
+        streamingReply.status(event.message);
+        // Extract tool name from "[Using tool: X]" for reaction emoji
+        const toolMatch = event.message.match(/\[Using tool: (.+)\]/);
+        if (toolMatch) {
+          reactionController.setTool(toolMatch[1]);
+        }
+      }
+    };
+
     try {
-      const response = await handler();
+      const response = await handler(onEvent);
       typing.onIdle?.();
       await reactionController.setDone();
       if (response) {
-        await sendText(bot, chatId, response);
+        if (accumulatedText && !streamingReply.failed()) {
+          // Streaming happened — finalize the streamed message with complete text
+          await streamingReply.finalize(response);
+        } else {
+          // No streaming happened (gateway command) or streaming failed — fresh send
+          await sendText(bot, chatId, response);
+        }
       }
     } catch (err) {
       typing.onCleanup?.();
@@ -165,7 +200,7 @@ export function createTelegramChannel(
     withTypingAndReactions(
       String(ctx.chat.id),
       ctx.message.message_id,
-      () => onMessage(message),
+      (onEvent) => onMessage(message, onEvent),
     ).catch((err) => {
       log.error("handler error", { error: err instanceof Error ? err.message : String(err) });
     });
@@ -200,7 +235,7 @@ export function createTelegramChannel(
     withTypingAndReactions(
       String(ctx.chat.id),
       ctx.message.message_id,
-      () => onMessage(message),
+      (onEvent) => onMessage(message, onEvent),
     ).catch((err) => {
       log.error("handler error", { error: err instanceof Error ? err.message : String(err) });
     });
@@ -236,7 +271,7 @@ export function createTelegramChannel(
     withTypingAndReactions(
       String(ctx.chat.id),
       ctx.message.message_id,
-      () => onMessage(message),
+      (onEvent) => onMessage(message, onEvent),
     ).catch((err) => {
       log.error("handler error", { error: err instanceof Error ? err.message : String(err) });
     });
