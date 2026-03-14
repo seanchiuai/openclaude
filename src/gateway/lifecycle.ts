@@ -23,6 +23,7 @@ import { requestHeartbeatNow } from "../cron/heartbeat-wake.js";
 import { createSubagentRegistry, type SubagentRegistry, type SubagentRun } from "../engine/subagent-registry.js";
 import { createAnnouncePipeline } from "../engine/subagent-announce.js";
 import { buildChildSystemPrompt } from "../engine/system-prompt.js";
+import { createStreamingReply } from "../channels/streaming.js";
 import { join } from "node:path";
 import type { OpenClaudeConfig } from "../config/types.js";
 import type { ProcessPool } from "../engine/pool.js";
@@ -48,7 +49,6 @@ const log = createLogger("gateway");
 export async function startGateway(configPath?: string): Promise<Gateway> {
   ensureDirectories();
 
-  // Verify Claude Code CLI is available before starting anything
   const cliVersion = checkClaudeCliVersion();
   log.info(`Claude Code CLI: ${cliVersion.raw}`);
 
@@ -279,7 +279,6 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     const { createSlackChannel } = await import("../channels/slack/index.js");
 
     const slack = createSlackChannel(config.channels.slack, async (msg) => {
-      const { createStreamingReply } = await import("../channels/streaming.js");
       const streamingReply = createStreamingReply({
         sendText: async (text) => {
           const result = await slack.sendText(msg.chatId, text);

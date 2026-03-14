@@ -111,7 +111,6 @@ export function createTelegramChannel(
     });
     await typing.onReplyStart();
 
-    // Create streaming reply for edit-in-place updates
     const streamingReply = createStreamingReply({
       sendText: async (text) => {
         const result = await sendText(bot, chatId, text);
@@ -120,17 +119,13 @@ export function createTelegramChannel(
       editMessage: (msgId, text) => editMessageText(chatId, msgId, text),
     });
 
-    // Accumulate text across multiple assistant events
     let accumulatedText = "";
-
-    // Build onEvent callback that forwards to streaming reply + reaction controller
     const onEvent: OnStreamEvent = (event: StreamEvent) => {
       if (event.type === "text") {
         accumulatedText += (accumulatedText ? "\n\n" : "") + event.text;
         streamingReply.update(accumulatedText);
       } else if (event.type === "status") {
         streamingReply.status(event.message);
-        // Extract tool name from "[Using tool: X]" for reaction emoji
         const toolMatch = event.message.match(/\[Using tool: (.+)\]/);
         if (toolMatch) {
           reactionController.setTool(toolMatch[1]);
@@ -144,10 +139,8 @@ export function createTelegramChannel(
       await reactionController.setDone();
       if (response) {
         if (accumulatedText && !streamingReply.failed()) {
-          // Streaming happened — finalize the streamed message with complete text
           await streamingReply.finalize(response);
         } else {
-          // No streaming happened (gateway command) or streaming failed — fresh send
           await sendText(bot, chatId, response);
         }
       }

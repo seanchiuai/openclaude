@@ -1,32 +1,30 @@
-// src/engine/cli-version.test.ts
 import { describe, it, expect, vi, afterEach } from "vitest";
 
+const mockExecFileSync = vi.fn();
 vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn(),
+  execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 }));
 
-import { execFileSync } from "node:child_process";
 import { checkClaudeCliVersion } from "./cli-version.js";
-
-const mockExecFileSync = vi.mocked(execFileSync);
 
 describe("checkClaudeCliVersion", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("returns parsed version when claude --version succeeds", () => {
-    mockExecFileSync.mockReturnValue(Buffer.from("1.0.20 (Claude Code)\n"));
+    mockExecFileSync.mockReturnValue("1.0.20 (Claude Code)\n");
 
     const result = checkClaudeCliVersion();
 
     expect(result).toEqual({ raw: "1.0.20 (Claude Code)", version: "1.0.20" });
     expect(mockExecFileSync).toHaveBeenCalledWith("claude", ["--version"], {
       timeout: 5000,
+      encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
     });
   });
 
   it("returns raw string when version format is unexpected", () => {
-    mockExecFileSync.mockReturnValue(Buffer.from("some-future-format v2\n"));
+    mockExecFileSync.mockReturnValue("some-future-format v2\n");
 
     const result = checkClaudeCliVersion();
 
@@ -40,15 +38,14 @@ describe("checkClaudeCliVersion", () => {
       throw err;
     });
 
-    expect(() => checkClaudeCliVersion()).toThrow(
-      /Claude Code CLI not found/,
-    );
+    expect(() => checkClaudeCliVersion()).toThrow(/Claude Code CLI not found/);
   });
 
   it("throws with stderr content on non-zero exit", () => {
-    const err = new Error("Command failed") as Error & { stderr: Buffer };
-    err.stderr = Buffer.from("permission denied\n");
-    mockExecFileSync.mockImplementation(() => { throw err; });
+    mockExecFileSync.mockImplementation(() => {
+      const err = Object.assign(new Error("Command failed"), { stderr: "permission denied\n" });
+      throw err;
+    });
 
     expect(() => checkClaudeCliVersion()).toThrow(/permission denied/);
   });

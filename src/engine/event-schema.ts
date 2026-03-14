@@ -2,8 +2,7 @@
  * Claude Code CLI NDJSON event classification.
  *
  * Extracts structured data from raw CLI events with graceful handling
- * of missing or renamed fields. Centralizes the event schema contract
- * so spawn.ts doesn't do ad-hoc field access.
+ * of missing or renamed fields.
  */
 import type { TokenUsage } from "./types.js";
 
