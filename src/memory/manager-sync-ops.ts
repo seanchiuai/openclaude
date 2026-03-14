@@ -691,22 +691,39 @@ export abstract class MemoryManagerSyncOps {
       this.writeMeta(nextMeta);
       this.pruneEmbeddingCacheIfNeeded?.();
 
+      // Close the temp DB before swapping files (it was only used for building the index)
       this.db.close();
-      originalDb.close();
-      originalDbClosed = true;
+
+      // Restore the original DB so concurrent operations have a valid handle during the file swap
+      this.db = originalDb;
 
       await this.swapIndexFiles(dbPath, tempDbPath);
 
-      this.db = this.openDatabaseAtPath(dbPath);
+      // Open the newly-swapped DB, then atomically swap this.db so there is never
+      // a moment where this.db references a closed database.
+      const newDb = this.openDatabaseAtPath(dbPath);
+      const oldDb = this.db;
+      this.db = newDb; // atomic swap — concurrent operations now use new DB
+      try {
+        oldDb.close();
+      } catch {
+        // Best-effort close of the old connection
+      }
+      originalDbClosed = true;
+
       this.vectorReady = null;
       this.vector.available = null;
       this.vector.loadError = undefined;
       this.ensureSchema();
       this.vector.dims = nextMeta?.vectorDims;
     } catch (err) {
-      try {
-        this.db.close();
-      } catch {}
+      // Close whatever this.db currently points to, unless it's the originalDb
+      // (which we want to keep open for recovery)
+      if (this.db !== originalDb) {
+        try {
+          this.db.close();
+        } catch {}
+      }
       await this.removeIndexFiles(tempDbPath);
       restoreOriginalState();
       throw err;
