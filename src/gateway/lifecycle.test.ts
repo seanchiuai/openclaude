@@ -164,6 +164,11 @@ vi.mock("../engine/spawn.js", () => ({
   killProcessGroup: (...args: unknown[]) => mockKillProcessGroup(...args),
 }));
 
+const mockCheckClaudeCliVersion = vi.fn(() => ({ raw: "1.0.20 (Claude Code)", version: "1.0.20" }));
+vi.mock("../engine/cli-version.js", () => ({
+  checkClaudeCliVersion: (...args: unknown[]) => mockCheckClaudeCliVersion(...args),
+}));
+
 // Minimal config with no channels enabled
 function minimalConfig() {
   return {
@@ -217,6 +222,7 @@ beforeEach(() => {
   mockLoadSkills.mockResolvedValue([]);
   mockCleanStaleGatewayProcessesSync.mockReturnValue([]);
   mockKillProcessGroup.mockReturnValue(undefined);
+  mockCheckClaudeCliVersion.mockReturnValue({ raw: "1.0.20 (Claude Code)", version: "1.0.20" });
 });
 
 describe("startGateway", () => {
@@ -301,6 +307,15 @@ describe("startGateway", () => {
     await gw.shutdown();
 
     expect(callOrder).toEqual(["memory.close", "channel.stop", "pool.drain", "server.close"]);
+  });
+
+  it("logs Claude CLI version at startup", async () => {
+    mockLoadConfig.mockReturnValue(minimalConfig());
+
+    const { startGateway } = await import("./lifecycle.js");
+    await startGateway();
+
+    expect(mockCheckClaudeCliVersion).toHaveBeenCalled();
   });
 
   it("calls orphan reaper on startup", async () => {
