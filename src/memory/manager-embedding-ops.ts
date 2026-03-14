@@ -30,6 +30,7 @@ const EMBEDDING_QUERY_TIMEOUT_REMOTE_MS = 60_000;
 const EMBEDDING_QUERY_TIMEOUT_LOCAL_MS = 5 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_REMOTE_MS = 2 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_LOCAL_MS = 10 * 60_000;
+const BATCH_FAILURE_LIMIT = 2;
 
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
@@ -398,6 +399,113 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       if (timer) {
         clearTimeout(timer);
       }
+    }
+  }
+
+  private async withBatchFailureLock<T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void;
+    const wait = this.batchFailureLock;
+    this.batchFailureLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await wait;
+    try {
+      return await fn();
+    } finally {
+      release!();
+    }
+  }
+
+  private async resetBatchFailureCount(): Promise<void> {
+    await this.withBatchFailureLock(async () => {
+      if (this.batchFailureCount > 0) {
+        log.debug("memory embeddings: batch recovered; resetting failure count");
+      }
+      this.batchFailureCount = 0;
+      this.batchFailureLastError = undefined;
+      this.batchFailureLastProvider = undefined;
+    });
+  }
+
+  private async recordBatchFailure(params: {
+    provider: string;
+    message: string;
+    attempts?: number;
+    forceDisable?: boolean;
+  }): Promise<{ disabled: boolean; count: number }> {
+    return await this.withBatchFailureLock(async () => {
+      if (!this.batch.enabled) {
+        return { disabled: true, count: this.batchFailureCount };
+      }
+      const increment = params.forceDisable
+        ? BATCH_FAILURE_LIMIT
+        : Math.max(1, params.attempts ?? 1);
+      this.batchFailureCount += increment;
+      this.batchFailureLastError = params.message;
+      this.batchFailureLastProvider = params.provider;
+      const disabled = params.forceDisable || this.batchFailureCount >= BATCH_FAILURE_LIMIT;
+      if (disabled) {
+        this.batch.enabled = false;
+      }
+      return { disabled, count: this.batchFailureCount };
+    });
+  }
+
+  private isBatchTimeoutError(message: string): boolean {
+    return /timed out|timeout/i.test(message);
+  }
+
+  private async runBatchWithTimeoutRetry<T>(params: {
+    provider: string;
+    run: () => Promise<T>;
+  }): Promise<T> {
+    try {
+      return await params.run();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (this.isBatchTimeoutError(message)) {
+        log.warn(`memory embeddings: ${params.provider} batch timed out; retrying once`);
+        try {
+          return await params.run();
+        } catch (retryErr) {
+          (retryErr as { batchAttempts?: number }).batchAttempts = 2;
+          throw retryErr;
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async runBatchWithFallback(params: {
+    provider: string;
+    run: () => Promise<number[][]>;
+    fallback: () => Promise<number[][]>;
+  }): Promise<number[][]> {
+    if (!this.batch.enabled) {
+      return await params.fallback();
+    }
+    try {
+      const result = await this.runBatchWithTimeoutRetry({
+        provider: params.provider,
+        run: params.run,
+      });
+      await this.resetBatchFailureCount();
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const attempts = (err as { batchAttempts?: number }).batchAttempts ?? 1;
+      const forceDisable = /asyncBatchEmbedContent not available/i.test(message);
+      const failure = await this.recordBatchFailure({
+        provider: params.provider,
+        message,
+        attempts,
+        forceDisable,
+      });
+      const suffix = failure.disabled ? "disabling batch" : "keeping batch enabled";
+      log.warn(
+        `memory embeddings: ${params.provider} batch failed (${failure.count}/${BATCH_FAILURE_LIMIT}); ${suffix}; falling back to non-batch embeddings: ${message}`,
+      );
+      return await params.fallback();
     }
   }
 

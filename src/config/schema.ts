@@ -60,7 +60,7 @@ export const MemorySchema = z.object({
   dbPath: z.string().default("~/.openclaude/memory/openclaude.sqlite"),
   sources: z.array(z.enum(["memory", "sessions"])).default(["memory"]),
   extraPaths: z.array(z.string()).default([]),
-  provider: z.enum(["openai", "gemini", "voyage", "mistral", "ollama", "auto", "none"]).default("none"),
+  provider: z.enum(["openai", "local", "gemini", "voyage", "mistral", "ollama", "auto", "none"]).default("none"),
   model: z.string().optional(),
   outputDimensionality: z.number().optional(),
   remote: z.object({
@@ -75,7 +75,11 @@ export const MemorySchema = z.object({
       timeoutMinutes: z.number().default(60),
     }).default({}),
   }).default({}),
-  fallback: z.enum(["openai", "gemini", "voyage", "mistral", "ollama", "none"]).default("none"),
+  local: z.object({
+    modelPath: z.string().optional(),
+    modelCacheDir: z.string().optional(),
+  }).optional(),
+  fallback: z.enum(["openai", "local", "gemini", "voyage", "mistral", "ollama", "none"]).default("none"),
   store: z.object({
     driver: z.literal("sqlite").default("sqlite"),
     path: z.string().optional(),

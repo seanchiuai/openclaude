@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import chokidar, { FSWatcher } from "chokidar";
 import { createLogger } from "../logging/logger.js";
 import type { MemoryConfig } from "../config/types.js";
-import type { EmbeddingProvider } from "./embeddings.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
 import type { GeminiEmbeddingClient } from "./embeddings-gemini.js";
 import type { MistralEmbeddingClient } from "./embeddings-mistral.js";
 import type { OllamaEmbeddingClient } from "./embeddings-ollama.js";
@@ -614,10 +614,41 @@ export abstract class MemoryManagerSyncOps {
     if (this.fallbackFrom) {
       return false;
     }
-    // Fallback provider creation is deferred to avoid circular deps.
-    // For now, just log the attempt. Full fallback requires the embedding provider factory.
-    log.warn(`memory embeddings: fallback requested to ${fallback} but not implemented in OpenClaude yet`, { reason });
-    return false;
+
+    const fallbackFrom = this.provider.id as
+      | "openai"
+      | "local"
+      | "gemini"
+      | "voyage"
+      | "mistral"
+      | "ollama";
+
+    const fallbackModel =
+      fallback !== fallbackFrom
+        ? this.memoryConfig.model
+        : this.memoryConfig.model;
+
+    const fallbackResult = await createEmbeddingProvider({
+      provider: fallback,
+      remote: this.memoryConfig.remote,
+      model: fallbackModel,
+      outputDimensionality: this.memoryConfig.outputDimensionality,
+      fallback: "none",
+      local: this.memoryConfig.local,
+    });
+
+    this.fallbackFrom = fallbackFrom;
+    this.fallbackReason = reason;
+    this.provider = fallbackResult.provider;
+    this.openAi = fallbackResult.openAi;
+    this.gemini = fallbackResult.gemini;
+    this.voyage = fallbackResult.voyage;
+    this.mistral = fallbackResult.mistral;
+    this.ollama = fallbackResult.ollama;
+    this.providerKey = this.computeProviderKey();
+    this.batch = this.resolveBatchConfig();
+    log.warn(`memory embeddings: switched to fallback provider (${fallback})`, { reason });
+    return true;
   }
 
   private async runSafeReindex(params: {

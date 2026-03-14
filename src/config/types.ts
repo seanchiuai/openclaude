@@ -54,7 +54,7 @@ export interface MemoryConfig {
   dbPath: string;
   sources: ("memory" | "sessions")[];
   extraPaths: string[];
-  provider: "openai" | "gemini" | "voyage" | "mistral" | "ollama" | "auto" | "none";
+  provider: "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama" | "auto" | "none";
   model?: string;
   outputDimensionality?: number;
   remote: {
@@ -69,7 +69,11 @@ export interface MemoryConfig {
       timeoutMinutes: number;
     };
   };
-  fallback: "openai" | "gemini" | "voyage" | "mistral" | "ollama" | "none";
+  local?: {
+    modelPath?: string;
+    modelCacheDir?: string;
+  };
+  fallback: "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama" | "none";
   store: {
     driver: "sqlite";
     path?: string;
