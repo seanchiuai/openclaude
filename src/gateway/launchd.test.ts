@@ -21,6 +21,8 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
   unlinkSync: vi.fn(),
   readFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  chmodSync: vi.fn(),
 }));
 
 vi.mock("../config/paths.js", () => ({
@@ -32,7 +34,7 @@ vi.mock("../config/paths.js", () => ({
 }));
 
 import { execSync } from "node:child_process";
-import { writeFileSync, existsSync, unlinkSync } from "node:fs";
+import { writeFileSync, existsSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
 import {
   buildPlist,
   installLaunchAgent,
@@ -48,6 +50,8 @@ const mockExecSync = vi.mocked(execSync);
 const mockWriteFileSync = vi.mocked(writeFileSync);
 const mockExistsSync = vi.mocked(existsSync);
 const mockUnlinkSync = vi.mocked(unlinkSync);
+const mockMkdirSync = vi.mocked(mkdirSync);
+const mockChmodSync = vi.mocked(chmodSync);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -74,6 +78,15 @@ describe("buildPlist", () => {
     expect(result).toContain("</plist>");
     expect(result).toContain("</dict>");
   });
+
+  it("contains Umask and ThrottleInterval for security hardening", () => {
+    const result = buildPlist("/usr/local/bin/node", "/app/dist/index.js");
+
+    expect(result).toContain("<key>Umask</key>");
+    expect(result).toContain("<integer>63</integer>");
+    expect(result).toContain("<key>ThrottleInterval</key>");
+    expect(result).toContain("<integer>1</integer>");
+  });
 });
 
 describe("installLaunchAgent", () => {
@@ -94,6 +107,16 @@ describe("installLaunchAgent", () => {
       `launchctl bootstrap gui/${uid} "${PLIST_PATH}"`,
       { stdio: "ignore" },
     );
+  });
+
+  it("creates plist directory with correct permissions and chmods the file", () => {
+    installLaunchAgent("/usr/local/bin/node", "/app/dist/index.js");
+
+    expect(mockMkdirSync).toHaveBeenCalledWith(
+      expect.stringContaining("LaunchAgents"),
+      { recursive: true, mode: 0o755 },
+    );
+    expect(mockChmodSync).toHaveBeenCalledWith(PLIST_PATH, 0o644);
   });
 });
 

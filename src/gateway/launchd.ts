@@ -3,7 +3,7 @@
  * Extracted and simplified from OpenClaw's daemon/launchd.ts.
  */
 import { execSync } from "node:child_process";
-import { writeFileSync, existsSync, unlinkSync, readFileSync } from "node:fs";
+import { writeFileSync, existsSync, unlinkSync, readFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { paths } from "../config/paths.js";
@@ -11,6 +11,9 @@ import { paths } from "../config/paths.js";
 const LABEL = "ai.openclaude.gateway";
 const PLIST_DIR = join(homedir(), "Library", "LaunchAgents");
 const PLIST_PATH = join(PLIST_DIR, `${LABEL}.plist`);
+
+const LAUNCH_AGENT_DIR_MODE = 0o755;
+const LAUNCH_AGENT_PLIST_MODE = 0o644;
 
 export function buildPlist(nodePath: string, entryPath: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -35,6 +38,10 @@ export function buildPlist(nodePath: string, entryPath: string): string {
     <key>SuccessfulExit</key>
     <false/>
   </dict>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>ThrottleInterval</key>
+  <integer>1</integer>
   <key>StandardOutPath</key>
   <string>${paths.logFile}</string>
   <key>StandardErrorPath</key>
@@ -53,7 +60,9 @@ export function installLaunchAgent(
   entryPath: string,
 ): void {
   const plist = buildPlist(nodePath, entryPath);
+  mkdirSync(PLIST_DIR, { recursive: true, mode: LAUNCH_AGENT_DIR_MODE });
   writeFileSync(PLIST_PATH, plist, "utf-8");
+  chmodSync(PLIST_PATH, LAUNCH_AGENT_PLIST_MODE);
 
   const uid = process.getuid?.();
   execSync(`launchctl bootstrap gui/${uid} "${PLIST_PATH}"`, {
