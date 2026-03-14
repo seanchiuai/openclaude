@@ -4,41 +4,28 @@ export const EMBEDDING_CACHE_TABLE = "embedding_cache";
 export const FTS_TABLE = "chunks_fts";
 export const VECTOR_TABLE = "chunks_vec";
 
-function ensureColumn(
-  db: DatabaseSync,
-  table: string,
-  column: string,
-  definition: string,
-): void {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-    name: string;
-  }>;
-  if (rows.some((row) => row.name === column)) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-}
-
-export function ensureMemorySchema(db: DatabaseSync): {
-  ftsAvailable: boolean;
-  ftsError?: string;
-} {
-  db.exec(`
+export function ensureMemoryIndexSchema(params: {
+  db: DatabaseSync;
+  embeddingCacheTable: string;
+  ftsTable: string;
+  ftsEnabled: boolean;
+}): { ftsAvailable: boolean; ftsError?: string } {
+  params.db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
-    )
+    );
   `);
-
-  db.exec(`
+  params.db.exec(`
     CREATE TABLE IF NOT EXISTS files (
       path TEXT PRIMARY KEY,
       source TEXT NOT NULL DEFAULT 'memory',
       hash TEXT NOT NULL,
       mtime INTEGER NOT NULL,
       size INTEGER NOT NULL
-    )
+    );
   `);
-
-  db.exec(`
+  params.db.exec(`
     CREATE TABLE IF NOT EXISTS chunks (
       id TEXT PRIMARY KEY,
       path TEXT NOT NULL,
@@ -50,18 +37,10 @@ export function ensureMemorySchema(db: DatabaseSync): {
       text TEXT NOT NULL,
       embedding TEXT NOT NULL,
       updated_at INTEGER NOT NULL
-    )
+    );
   `);
-
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path)`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)`,
-  );
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ${EMBEDDING_CACHE_TABLE} (
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS ${params.embeddingCacheTable} (
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
       provider_key TEXT NOT NULL,
@@ -70,38 +49,67 @@ export function ensureMemorySchema(db: DatabaseSync): {
       dims INTEGER,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (provider, model, provider_key, hash)
-    )
+    );
   `);
-
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated_at ON ${EMBEDDING_CACHE_TABLE}(updated_at)`,
+  params.db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated_at ON ${params.embeddingCacheTable}(updated_at);`,
   );
 
-  // Backward compat columns
-  ensureColumn(db, "files", "source", "TEXT NOT NULL DEFAULT 'memory'");
-  ensureColumn(db, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'");
-
-  // FTS5 — standalone table (not content-sync) so we insert/query directly
   let ftsAvailable = false;
   let ftsError: string | undefined;
-
-  try {
-    db.exec(
-      `CREATE VIRTUAL TABLE IF NOT EXISTS ${FTS_TABLE} USING fts5(\n` +
-        `  text,\n` +
-        `  id UNINDEXED,\n` +
-        `  path UNINDEXED,\n` +
-        `  source UNINDEXED,\n` +
-        `  model UNINDEXED,\n` +
-        `  start_line UNINDEXED,\n` +
-        `  end_line UNINDEXED\n` +
-        `)`,
-    );
-    ftsAvailable = true;
-  } catch (err: unknown) {
-    ftsError =
-      err instanceof Error ? err.message : "Unknown FTS5 initialization error";
+  if (params.ftsEnabled) {
+    try {
+      params.db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS ${params.ftsTable} USING fts5(\n` +
+          `  text,\n` +
+          `  id UNINDEXED,\n` +
+          `  path UNINDEXED,\n` +
+          `  source UNINDEXED,\n` +
+          `  model UNINDEXED,\n` +
+          `  start_line UNINDEXED,\n` +
+          `  end_line UNINDEXED\n` +
+          `);`,
+      );
+      ftsAvailable = true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ftsAvailable = false;
+      ftsError = message;
+    }
   }
 
-  return { ftsAvailable, ftsError };
+  ensureColumn(params.db, "files", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  ensureColumn(params.db, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);`);
+
+  return { ftsAvailable, ...(ftsError ? { ftsError } : {}) };
+}
+
+function ensureColumn(
+  db: DatabaseSync,
+  table: "files" | "chunks",
+  column: string,
+  definition: string,
+): void {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (rows.some((row) => row.name === column)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/**
+ * Backward-compatible wrapper that calls ensureMemoryIndexSchema with default params.
+ */
+export function ensureMemorySchema(db: DatabaseSync): {
+  ftsAvailable: boolean;
+  ftsError?: string;
+} {
+  return ensureMemoryIndexSchema({
+    db,
+    embeddingCacheTable: "embedding_cache",
+    ftsTable: "chunks_fts",
+    ftsEnabled: true,
+  });
 }
