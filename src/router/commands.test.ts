@@ -333,6 +333,53 @@ describe("createCommandHandlers", () => {
     });
   });
 
+  describe("/list with subagents", () => {
+    it("shows subagent tree under parent sessions", async () => {
+      const pool = createMockPool();
+      pool.listSessions.mockReturnValue([
+        { id: "main-abc", status: "running", startedAt: Date.now() - 5000 },
+      ]);
+      const registry = {
+        getRunsForParent: vi.fn().mockReturnValue([
+          { childSessionId: "sub-xyz", label: "research", status: "running", createdAt: Date.now() - 3000 },
+          { childSessionId: "sub-def", label: "summarize", status: "completed", createdAt: Date.now() - 1000, duration: 1000 },
+        ]),
+        allRuns: vi.fn().mockReturnValue([]),
+      };
+      const handlers = createCommandHandlers({
+        pool: pool as unknown as Parameters<typeof createCommandHandlers>[0]["pool"],
+        subagentRegistry: registry as unknown as Parameters<typeof createCommandHandlers>[0]["subagentRegistry"],
+      });
+      const result = await handlers.list({ name: "list", args: "" });
+      expect(result).toContain("sub-xyz");
+      expect(result).toContain("research");
+      expect(result).toContain("sub-def");
+    });
+  });
+
+  describe("/stop with cascade", () => {
+    it("kills parent and all active children", async () => {
+      const pool = createMockPool();
+      pool.killSession.mockReturnValue(true);
+      const registry = {
+        getActiveRunsForParent: vi.fn().mockReturnValue([
+          { runId: "r1", childSessionId: "sub-xyz", status: "running" },
+        ]),
+        endRun: vi.fn(),
+      };
+      const handlers = createCommandHandlers({
+        pool: pool as unknown as Parameters<typeof createCommandHandlers>[0]["pool"],
+        subagentRegistry: registry as unknown as Parameters<typeof createCommandHandlers>[0]["subagentRegistry"],
+      });
+      const result = await handlers.stop({ name: "stop", args: "main-abc" });
+      expect(pool.killSession).toHaveBeenCalledWith("main-abc");
+      expect(pool.killSession).toHaveBeenCalledWith("sub-xyz");
+      expect(registry.endRun).toHaveBeenCalledWith("r1", "killed");
+      expect(result).toContain("stopped");
+      expect(result).toContain("subagent");
+    });
+  });
+
   describe("/cron unknown", () => {
     it("returns 'Unknown cron subcommand' for invalid subcommand", async () => {
       const pool = createMockPool();

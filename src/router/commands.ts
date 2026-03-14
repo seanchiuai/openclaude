@@ -5,12 +5,14 @@
 import type { ProcessPool } from "../engine/pool.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { CronService } from "../cron/index.js";
+import type { SubagentRegistry } from "../engine/subagent-registry.js";
 import type { ParsedCommand } from "./types.js";
 
 export interface CommandDeps {
   pool: ProcessPool;
   memoryManager?: MemoryManager;
   cronService?: CronService;
+  subagentRegistry?: SubagentRegistry;
 }
 
 export function createCommandHandlers(deps: CommandDeps) {
@@ -26,10 +28,21 @@ export function createCommandHandlers(deps: CommandDeps) {
         return "No active sessions.";
       }
 
-      const lines = sessions.map((s) => {
+      const lines: string[] = [];
+      for (const s of sessions) {
         const elapsed = Math.round((Date.now() - s.startedAt) / 1000);
-        return `- ${s.id} [${s.status}] (${elapsed}s)`;
-      });
+        lines.push(`  ${s.id} [${s.status}] (${elapsed}s)`);
+
+        // Show children if registry available
+        if (deps.subagentRegistry) {
+          const children = deps.subagentRegistry.getRunsForParent(s.id);
+          for (const child of children) {
+            const childElapsed = child.duration ? Math.round(child.duration / 1000) : Math.round((Date.now() - child.createdAt) / 1000);
+            const label = child.label ?? child.task.slice(0, 40);
+            lines.push(`    └─ ${child.childSessionId} [${child.status}] "${label}" (${childElapsed}s)`);
+          }
+        }
+      }
 
       return `Active sessions:\n${lines.join("\n")}`;
     },
@@ -44,6 +57,21 @@ export function createCommandHandlers(deps: CommandDeps) {
       }
 
       const killed = pool.killSession(sessionId);
+
+      // Cascade kill children
+      if (deps.subagentRegistry) {
+        const activeChildren = deps.subagentRegistry.getActiveRunsForParent(sessionId);
+        for (const child of activeChildren) {
+          pool.killSession(child.childSessionId);
+          deps.subagentRegistry.endRun(child.runId, "killed");
+        }
+        if (activeChildren.length > 0) {
+          return killed
+            ? `Session ${sessionId} stopped (+ ${activeChildren.length} subagent${activeChildren.length > 1 ? "s" : ""}).`
+            : `${activeChildren.length} subagent${activeChildren.length > 1 ? "s" : ""} stopped.`;
+        }
+      }
+
       return killed
         ? `Session ${sessionId} stopped.`
         : `Session ${sessionId} not found.`;
