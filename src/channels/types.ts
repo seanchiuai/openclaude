@@ -3,6 +3,8 @@
  * Simplified from OpenClaw's channels/plugins/types.plugin.ts.
  */
 
+import type { OnStreamEvent } from "../engine/types.js";
+
 export interface InboundMessage {
   /** Channel the message came from */
   channel: string;
@@ -58,4 +60,4 @@ export interface ChannelAdapter {
 }
 
 /** Returns the response text to send back to the user. */
-export type MessageHandler = (message: InboundMessage) => Promise<string>;
+export type MessageHandler = (message: InboundMessage, onEvent?: OnStreamEvent) => Promise<string>;
