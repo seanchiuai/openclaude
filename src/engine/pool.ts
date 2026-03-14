@@ -23,6 +23,7 @@ interface QueuedTask {
 export function createProcessPool(maxConcurrent = 4) {
   const running = new Map<string, ClaudeSession>();
   const queue: QueuedTask[] = [];
+  const completions = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   let draining = false;
 
   function stats(): PoolStats {
@@ -48,14 +49,22 @@ export function createProcessPool(maxConcurrent = 4) {
       const { session, promise } = spawnClaude(task, onEvent);
       running.set(session.id, session);
 
+      let resolveCompletion: () => void;
+      const completionPromise = new Promise<void>((r) => { resolveCompletion = r; });
+      completions.set(session.id, { promise: completionPromise, resolve: resolveCompletion! });
+
       promise
         .then((result) => {
           running.delete(session.id);
+          completions.get(session.id)?.resolve();
+          completions.delete(session.id);
           resolve(result);
           tryDequeue();
         })
         .catch((err) => {
           running.delete(session.id);
+          completions.get(session.id)?.resolve();
+          completions.delete(session.id);
           reject(err instanceof Error ? err : new Error(String(err)));
           tryDequeue();
         });
@@ -167,6 +176,10 @@ export function createProcessPool(maxConcurrent = 4) {
     }
   }
 
+  function getCompletion(sessionId: string): Promise<void> | undefined {
+    return completions.get(sessionId)?.promise;
+  }
+
   return {
     submit,
     getSession,
@@ -174,6 +187,7 @@ export function createProcessPool(maxConcurrent = 4) {
     killSession,
     drain,
     stats,
+    getCompletion,
   };
 }
 

@@ -286,6 +286,35 @@ describe("createProcessPool", () => {
     expect(pool.getSession("nope")).toBeUndefined();
   });
 
+  describe("completion tracking", () => {
+    it("resolves session completion promise when task finishes", async () => {
+      const { resolvers } = setupMockSpawn();
+      const pool = createProcessPool(4);
+      const submitPromise = pool.submit({ sessionId: "s1", prompt: "hi" });
+      const completion = pool.getCompletion("s1");
+      expect(completion).toBeInstanceOf(Promise);
+      resolvers[0]({ text: "ok", exitCode: 0, duration: 100 });
+      await completion;
+      await submitPromise;
+    });
+
+    it("returns undefined completion for unknown session", () => {
+      const pool = createProcessPool(4);
+      expect(pool.getCompletion("nonexistent")).toBeUndefined();
+    });
+
+    it("resolves completion even on task failure", async () => {
+      const { rejecters } = setupMockSpawn();
+      const pool = createProcessPool(4);
+      const submitPromise = pool.submit({ sessionId: "s1", prompt: "hi" }).catch(() => {});
+      const completion = pool.getCompletion("s1");
+      expect(completion).toBeInstanceOf(Promise);
+      rejecters[0](new Error("boom"));
+      await completion;
+      await submitPromise;
+    });
+  });
+
   it("drain() collects PIDs and waits for exit", async () => {
     const pool = createProcessPool(2);
     setupMockSpawn();
