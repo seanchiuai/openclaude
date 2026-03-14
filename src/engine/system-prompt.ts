@@ -117,6 +117,8 @@ function buildToolsSection(hasGatewayTools: boolean): string[] {
     "- memory_search: Search memory files",
     "- memory_get: Get specific memory content",
     "- send_message: Send a message to a channel",
+    "- sessions_spawn: Spawn a background subagent to work on a task (returns immediately, you'll be resumed with results)",
+    "- sessions_status: Check status of your spawned subagents",
     "Use these tools when the user asks you to set reminders, schedule tasks, search memory, or send messages to channels.",
     "",
   ];
