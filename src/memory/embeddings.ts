@@ -23,6 +23,7 @@ export type EmbeddingProvider = {
   maxInputTokens?: number;
   embedQuery: (text: string) => Promise<number[]>;
   embedBatch: (texts: string[]) => Promise<number[][]>;
+  embedBatchInputs?: (inputs: import("./embedding-inputs.js").EmbeddingInput[]) => Promise<number[][]>;
 };
 
 export type EmbeddingProviderId = "openai" | "gemini" | "voyage" | "mistral" | "ollama";

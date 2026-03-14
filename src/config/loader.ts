@@ -25,7 +25,47 @@ const DEFAULT_CONFIG: OpenClaudeConfig = {
   },
   mcp: {},
   memory: {
+    enabled: true,
     dbPath: paths.memoryDb,
+    sources: ["memory"],
+    extraPaths: [],
+    provider: "none",
+    fallback: "none",
+    remote: {
+      batch: {
+        enabled: false,
+        wait: true,
+        concurrency: 2,
+        pollIntervalMs: 2000,
+        timeoutMinutes: 60,
+      },
+    },
+    store: {
+      driver: "sqlite",
+      vector: { enabled: false },
+    },
+    chunking: { tokens: 400, overlap: 80 },
+    sync: {
+      onSessionStart: false,
+      onSearch: true,
+      watch: true,
+      watchDebounceMs: 2000,
+      intervalMinutes: 0,
+    },
+    query: {
+      maxResults: 6,
+      minScore: 0,
+      hybrid: {
+        enabled: true,
+        vectorWeight: 0.7,
+        textWeight: 0.3,
+        candidateMultiplier: 4,
+        mmr: { enabled: false, lambda: 0.5 },
+        temporalDecay: { enabled: false, halfLifeDays: 30 },
+      },
+    },
+    cache: { enabled: false },
+    multimodal: { enabled: false },
   },
   cron: {
     enabled: false,
