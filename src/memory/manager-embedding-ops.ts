@@ -1,8 +1,3 @@
-/**
- * Embedding operations for the memory manager.
- * Extends MemoryManagerSyncOps with batch embedding, caching, and retry logic.
- * Ported from OpenClaw's manager-embedding-ops.ts, adapted for OpenClaude.
- */
 import fs from "node:fs/promises";
 import { createLogger } from "../logging/logger.js";
 import { enforceEmbeddingMaxInputTokens } from "./embedding-chunk-limits.js";

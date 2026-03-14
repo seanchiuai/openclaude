@@ -1,6 +1,4 @@
-// TODO: Import EmbeddingProvider from embeddings.ts once that module is ported.
-// For now, define a minimal type locally matching the fields used here.
-type EmbeddingProvider = { id: string; model: string; maxInputTokens?: number };
+import type { EmbeddingProvider } from "./embeddings.js";
 
 const DEFAULT_EMBEDDING_MAX_INPUT_TOKENS = 8192;
 const DEFAULT_LOCAL_EMBEDDING_MAX_INPUT_TOKENS = 2048;

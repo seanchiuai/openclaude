@@ -99,9 +99,6 @@ function ensureColumn(
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-/**
- * Backward-compatible wrapper that calls ensureMemoryIndexSchema with default params.
- */
 export function ensureMemorySchema(db: DatabaseSync): {
   ftsAvailable: boolean;
   ftsError?: string;

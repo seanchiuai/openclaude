@@ -1,8 +1,3 @@
-/**
- * Utility functions for memory status display.
- * Ported from OpenClaw's status-format.ts.
- */
-
 export type Tone = "ok" | "warn" | "muted";
 
 export function resolveMemoryVectorState(vector: { enabled: boolean; available?: boolean }): {

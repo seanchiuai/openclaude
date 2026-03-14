@@ -1,12 +1,3 @@
-/**
- * MemoryIndexManager — class-based memory manager with search, sync, and status.
- * Ported from OpenClaw's manager.ts, adapted for OpenClaude's config.
- *
- * Class hierarchy:
- *   MemoryManagerSyncOps (base)
- *     -> MemoryManagerEmbeddingOps (embedding batch/cache/retry)
- *       -> MemoryIndexManager (search, readFile, status, probing)
- */
 import type { DatabaseSync } from "node:sqlite";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -121,9 +112,6 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private readonlyRecoveryFailures = 0;
   private readonlyRecoveryLastError?: string;
 
-  /**
-   * Create or retrieve a cached MemoryIndexManager.
-   */
   static async get(params: {
     memoryConfig: MemoryConfig;
     workspaceDir?: string;
@@ -753,10 +741,6 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
 
 // ---------- Backward compatibility ----------
 
-/**
- * Legacy MemoryManager interface, kept for backward compat with callers
- * that use the old factory-based API.
- */
 export interface MemoryManager {
   search(
     query: string,
@@ -784,10 +768,6 @@ export interface MemoryManagerConfig {
   textWeight?: number;
 }
 
-/**
- * Backward-compatible factory that creates a simple FTS-only manager.
- * Used by gateway/lifecycle.ts until it migrates to MemoryIndexManager.get().
- */
 export function createMemoryManager(config: MemoryManagerConfig): MemoryManager {
   const {
     dbPath,

@@ -1,8 +1,3 @@
-/**
- * Base class for memory manager operations: database management, file sync,
- * vector extension loading, and file watchers.
- * Ported from OpenClaw's manager-sync-ops.ts, adapted for OpenClaude's config.
- */
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";

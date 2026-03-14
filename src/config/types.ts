@@ -1,8 +1,3 @@
-/**
- * OpenClaude configuration types.
- * Simplified from OpenClaw's config system.
- */
-
 export interface TelegramChannelConfig {
   enabled: boolean;
   botToken: string;

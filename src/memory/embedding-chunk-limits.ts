@@ -1,12 +1,9 @@
+import type { EmbeddingProvider } from "./embeddings.js";
+import { type EmbeddingInput, hasNonTextEmbeddingParts } from "./embedding-inputs.js";
 import { estimateUtf8Bytes, splitTextToUtf8ByteLimit } from "./embedding-input-limits.js";
 import { resolveEmbeddingMaxInputTokens } from "./embedding-model-limits.js";
 import { hashText } from "./internal.js";
 
-// TODO: Import these types from their canonical modules once ported.
-// EmbeddingProvider from embeddings.ts, MemoryChunk from internal.ts (with embeddingInput field),
-// EmbeddingInput and hasNonTextEmbeddingParts from embedding-inputs.ts.
-type EmbeddingProvider = { id: string; model: string; maxInputTokens?: number };
-type EmbeddingInput = { text: string; parts?: Array<{ type: string; text?: string; mimeType?: string; data?: string }> };
 type MemoryChunkWithEmbedding = {
   startLine: number;
   endLine: number;
@@ -14,13 +11,6 @@ type MemoryChunkWithEmbedding = {
   hash: string;
   embeddingInput?: EmbeddingInput;
 };
-
-function hasNonTextEmbeddingParts(input: EmbeddingInput | undefined): boolean {
-  if (!input?.parts?.length) {
-    return false;
-  }
-  return input.parts.some((part) => part.type === "inline-data");
-}
 
 export function enforceEmbeddingMaxInputTokens(
   provider: EmbeddingProvider,

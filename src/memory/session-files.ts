@@ -13,13 +13,9 @@ export type SessionFileEntry = {
   size: number;
   hash: string;
   content: string;
-  /** Maps each content line (0-indexed) to its 1-indexed JSONL source line. */
   lineMap: number[];
 };
 
-/**
- * List all `.jsonl` session transcript files in the OpenClaude sessions directory.
- */
 export async function listSessionFiles(sessionsDir?: string): Promise<string[]> {
   const dir = sessionsDir ?? paths.sessions;
   try {

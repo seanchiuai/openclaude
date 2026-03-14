@@ -1,10 +1,3 @@
-/**
- * Resolves a full memory backend configuration from OpenClaude's MemoryConfig.
- *
- * Simplified from OpenClaw's version: only the "builtin" backend is supported
- * (no QMD). This is mostly a validation passthrough since OpenClaude's config
- * already contains all necessary fields.
- */
 import type { MemoryConfig } from "../config/types.js";
 
 export type ResolvedMemoryBackendConfig = {
@@ -26,11 +19,6 @@ export type ResolvedMemoryBackendConfig = {
   extraPaths: MemoryConfig["extraPaths"];
 };
 
-/**
- * Resolve and validate a MemoryConfig into the shape consumed by
- * MemoryIndexManager.get(). Since OpenClaude only supports the builtin
- * backend, this is largely a passthrough with minor normalization.
- */
 export function resolveMemoryBackendConfig(
   config: MemoryConfig,
 ): ResolvedMemoryBackendConfig {

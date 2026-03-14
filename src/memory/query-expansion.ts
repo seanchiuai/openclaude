@@ -1,13 +1,3 @@
-/**
- * Query expansion for FTS-only search mode.
- *
- * When no embedding provider is available, we fall back to FTS (full-text search).
- * FTS works best with specific keywords, but users often ask conversational queries
- * like "that thing we discussed yesterday" or "之前讨论的那个方案".
- *
- * This module extracts meaningful keywords from such queries to improve FTS results.
- */
-
 // Common stop words that don't add search value
 const STOP_WORDS_EN = new Set([
   // Articles and determiners
@@ -642,10 +632,6 @@ export function isQueryStopWordToken(token: string): boolean {
   );
 }
 
-/**
- * Check if a token looks like a meaningful keyword.
- * Returns false for short tokens, numbers-only, etc.
- */
 function isValidKeyword(token: string): boolean {
   if (!token || token.length === 0) {
     return false;
@@ -665,11 +651,6 @@ function isValidKeyword(token: string): boolean {
   return true;
 }
 
-/**
- * Simple tokenizer that handles English, Chinese, Korean, and Japanese text.
- * For Chinese, we do character-based splitting since we don't have a proper segmenter.
- * For English, we split on whitespace and punctuation.
- */
 export function tokenize(text: string): string[] {
   const tokens: string[] = [];
   const normalized = text.toLowerCase().trim();
@@ -724,14 +705,6 @@ export function tokenize(text: string): string[] {
   return tokens;
 }
 
-/**
- * Extract keywords from a conversational query for FTS search.
- *
- * Examples:
- * - "that thing we discussed about the API" → ["discussed", "API"]
- * - "之前讨论的那个方案" → ["讨论", "方案"]
- * - "what was the solution for the bug" → ["solution", "bug"]
- */
 export function extractKeywords(query: string): string[] {
   const tokens = tokenize(query);
   const keywords: string[] = [];
@@ -757,11 +730,6 @@ export function extractKeywords(query: string): string[] {
   return keywords;
 }
 
-/**
- * Build an FTS5 query string from raw user input.
- * Filters stop words and short/numeric tokens, then joins with AND.
- * Returns null if no useful tokens remain.
- */
 export function buildFtsQuery(raw: string): string | null {
   const tokens = Array.from(raw.matchAll(/[\p{L}\p{N}_]+/gu), (m) => m[0]);
   const filtered = tokens.filter(
@@ -771,28 +739,8 @@ export function buildFtsQuery(raw: string): string | null {
   return filtered.map((t) => `"${t}"`).join(" AND ");
 }
 
-/**
- * Convert a BM25 rank value to a normalized 0-1 relevance score.
- * SQLite FTS5 returns negative ranks where more-negative = more relevant.
- */
-export function bm25RankToScore(rank: number): number {
-  if (!Number.isFinite(rank)) {
-    return 1 / (1 + 999);
-  }
-  if (rank < 0) {
-    const relevance = -rank;
-    return relevance / (1 + relevance);
-  }
-  return 1 / (1 + rank);
-}
+export { bm25RankToScore } from "./hybrid.js";
 
-/**
- * Expand a query for FTS search.
- * Returns both the original query and extracted keywords for OR-matching.
- *
- * @param query - User's original query
- * @returns Object with original query and extracted keywords
- */
 export function expandQueryForFts(query: string): {
   original: string;
   keywords: string[];
@@ -808,16 +756,8 @@ export function expandQueryForFts(query: string): {
   return { original, keywords, expanded };
 }
 
-/**
- * Type for an optional LLM-based query expander.
- * Can be provided to enhance keyword extraction with semantic understanding.
- */
 export type LlmQueryExpander = (query: string) => Promise<string[]>;
 
-/**
- * Expand query with optional LLM assistance.
- * Falls back to local extraction if LLM is unavailable or fails.
- */
 export async function expandQueryWithLlm(
   query: string,
   llmExpander?: LlmQueryExpander,

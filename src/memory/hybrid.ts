@@ -60,11 +60,8 @@ export async function mergeHybridResults(params: {
   vectorWeight: number;
   textWeight: number;
   workspaceDir?: string;
-  /** MMR configuration for diversity-aware re-ranking */
   mmr?: Partial<MMRConfig>;
-  /** Temporal decay configuration for recency-aware scoring */
   temporalDecay?: Partial<TemporalDecayConfig>;
-  /** Test seam for deterministic time-dependent behavior */
   nowMs?: number;
 }): Promise<
   Array<{

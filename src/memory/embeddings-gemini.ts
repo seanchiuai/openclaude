@@ -42,7 +42,6 @@ export type GeminiTextEmbeddingRequest = {
   model?: string;
 };
 
-/** Builds the text-only Gemini embedding request shape. */
 export function buildGeminiTextEmbeddingRequest(params: {
   text: string;
   taskType: GeminiTaskType;
@@ -62,18 +61,10 @@ export function buildGeminiTextEmbeddingRequest(params: {
   return request;
 }
 
-/**
- * Returns true if the given model name is a gemini-embedding-2 variant that
- * supports `outputDimensionality` and extended task types.
- */
 export function isGeminiEmbedding2Model(model: string): boolean {
   return GEMINI_EMBEDDING_2_MODELS.has(model);
 }
 
-/**
- * Validate and return the `outputDimensionality` for gemini-embedding-2 models.
- * Returns `undefined` for older models (they don't support the param).
- */
 export function resolveGeminiOutputDimensionality(
   model: string,
   requested?: number,

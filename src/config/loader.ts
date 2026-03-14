@@ -1,9 +1,3 @@
-/**
- * Config file loader for OpenClaude.
- * Extracted and simplified from OpenClaw's config/io.ts.
- *
- * Reads ~/.openclaude/config.json, substitutes env vars, validates with Zod.
- */
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "./paths.js";

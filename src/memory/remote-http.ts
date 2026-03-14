@@ -1,8 +1,3 @@
-/**
- * Simplified HTTP utilities for embedding provider communication.
- * Adapted from OpenClaw — SSRF guard removed (local-only runtime).
- */
-
 export function buildRemoteBaseUrlPolicy(_baseUrl: string): undefined {
   return undefined;
 }

@@ -4,7 +4,6 @@ const require = createRequire(import.meta.url);
 
 const warningFilterKey = Symbol.for("openclaude.warning-filter");
 
-/** Suppress noisy experimental/deprecated warnings from node:sqlite. */
 function installProcessWarningFilter(): void {
   const globalState = globalThis as typeof globalThis & {
     [warningFilterKey]?: { installed: boolean };

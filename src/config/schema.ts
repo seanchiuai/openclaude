@@ -1,7 +1,3 @@
-/**
- * Zod schemas for OpenClaude configuration validation.
- * Extracted and simplified from OpenClaw's config/zod-schema.ts.
- */
 import { z } from "zod";
 
 export const TelegramChannelSchema = z.object({

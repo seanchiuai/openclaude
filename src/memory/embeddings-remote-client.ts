@@ -1,9 +1,3 @@
-/**
- * API key resolution and bearer client for remote embedding providers.
- * Adapted from OpenClaw — simplified to resolve keys from config or env vars
- * instead of model-auth.js / secret-input.js.
- */
-
 export type RemoteEmbeddingProviderId = "openai" | "voyage" | "mistral";
 
 const PROVIDER_ENV_VARS: Record<RemoteEmbeddingProviderId, string> = {

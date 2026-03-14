@@ -1,14 +1,7 @@
-/**
- * Standalone search functions for the memory manager.
- * Ported from OpenClaw's manager-search.ts.
- */
 import type { DatabaseSync } from "node:sqlite";
 import { cosineSimilarity, parseEmbedding } from "./internal.js";
 
-/**
- * Truncate a string to a maximum number of UTF-16 code units without
- * splitting a surrogate pair. Inlined from OpenClaw's utils.ts.
- */
+// Truncate without splitting a surrogate pair.
 function truncateUtf16Safe(value: string, maxCodeUnits: number): string {
   if (value.length <= maxCodeUnits) {
     return value;
