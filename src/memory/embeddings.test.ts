@@ -1,249 +1,460 @@
-/**
- * Contract tests for src/memory/embeddings.ts
- *
- * This module provides embedding generation with caching and provider selection.
- *
- * Expected interface:
- *   interface EmbeddingProvider {
- *     id: string;
- *     model: string;
- *     embedQuery(text: string): Promise<number[]>;
- *     embedBatch(texts: string[]): Promise<number[][]>;
- *   }
- *
- *   function createEmbeddingProvider(options: {
- *     provider: string;
- *     model?: string;
- *     apiKey?: string;
- *     baseUrl?: string;
- *     batchSize?: number;
- *     timeout?: number;
- *     db?: DatabaseSync;
- *   }): Promise<{
- *     provider: EmbeddingProvider | null;
- *     error?: string;
- *   }>
- *
- * The implementation module does not exist yet. These tests define the
- * contract that the embeddings module must satisfy once implemented.
- * All external providers are mocked — no real API calls are made.
- */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEmbeddingProvider, type EmbeddingProviderResult } from "./embeddings.js";
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Types mirroring the contract
-// ---------------------------------------------------------------------------
-interface EmbeddingProvider {
-  id: string;
-  model: string;
-  embedQuery(text: string): Promise<number[]>;
-  embedBatch(texts: string[]): Promise<number[][]>;
-}
-
-interface EmbeddingProviderResult {
-  provider: EmbeddingProvider | null;
-  error?: string;
-}
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeVector(dims: number, seed: number = 1): number[] {
-  return Array.from({ length: dims }, (_, i) => Math.sin(seed + i) * 0.5);
+function requireProvider(result: EmbeddingProviderResult) {
+  if (!result.provider) {
+    throw new Error("Expected embedding provider but got null");
+  }
+  return result.provider;
 }
 
-function createMockProvider(
-  overrides: Partial<EmbeddingProvider> = {},
-): EmbeddingProvider {
-  const dims = 384;
-  return {
-    id: overrides.id ?? "mock",
-    model: overrides.model ?? "mock-model",
-    embedQuery:
-      overrides.embedQuery ??
-      vi.fn(async (_text: string) => makeVector(dims)),
-    embedBatch:
-      overrides.embedBatch ??
-      vi.fn(async (texts: string[]) => texts.map((_, i) => makeVector(dims, i))),
-  };
-}
+const createFetchMock = () =>
+  vi.fn(async (_input?: unknown, _init?: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ data: [{ embedding: [1, 2, 3] }] }),
+    text: async () => "",
+  }));
+
+const createGeminiFetchMock = () =>
+  vi.fn(async (_input?: unknown, _init?: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ embedding: { values: [1, 2, 3] } }),
+    text: async () => "",
+  }));
 
 // ---------------------------------------------------------------------------
-// Simple in-memory cache for contract testing
-// ---------------------------------------------------------------------------
-class EmbeddingCache {
-  private store = new Map<string, number[]>();
-
-  get(key: string): number[] | undefined {
-    return this.store.get(key);
-  }
-
-  set(key: string, value: number[]): void {
-    this.store.set(key, value);
-  }
-
-  has(key: string): boolean {
-    return this.store.has(key);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
+// Factory: createEmbeddingProvider
 // ---------------------------------------------------------------------------
 
-describe("EmbeddingProvider contract", () => {
-  it("local provider returns fixed-dimension vectors", async () => {
-    const dims = 384;
-    const provider = createMockProvider({
-      id: "local",
-      model: "all-MiniLM-L6-v2",
-      embedQuery: vi.fn(async () => makeVector(dims)),
-      embedBatch: vi.fn(async (texts: string[]) =>
-        texts.map(() => makeVector(dims)),
-      ),
+describe("createEmbeddingProvider", () => {
+  it("returns null provider when auto mode finds no API keys", async () => {
+    // No env vars set — all providers should fail with missing key errors
+    const result = await createEmbeddingProvider({
+      provider: "auto",
+      model: "",
     });
-
-    const vec = await provider.embedQuery("hello world");
-    expect(vec).toHaveLength(dims);
-    expect(typeof vec[0]).toBe("number");
-
-    const batch = await provider.embedBatch(["a", "b", "c"]);
-    expect(batch).toHaveLength(3);
-    for (const v of batch) {
-      expect(v).toHaveLength(dims);
-    }
-  });
-
-  it("cache hit skips provider and returns cached embedding", async () => {
-    const embedFn = vi.fn(async () => makeVector(384));
-    const provider = createMockProvider({ embedQuery: embedFn });
-    const cache = new EmbeddingCache();
-
-    const cacheKey = "test-query";
-    const cachedVec = makeVector(384, 42);
-    cache.set(cacheKey, cachedVec);
-
-    // Simulate cached lookup: if cache has it, don't call provider
-    const result = cache.has(cacheKey)
-      ? cache.get(cacheKey)!
-      : await provider.embedQuery(cacheKey);
-
-    expect(result).toEqual(cachedVec);
-    expect(embedFn).not.toHaveBeenCalled();
-  });
-
-  it("cache miss calls provider and caches result", async () => {
-    const expectedVec = makeVector(384, 7);
-    const embedFn = vi.fn(async () => expectedVec);
-    const provider = createMockProvider({ embedQuery: embedFn });
-    const cache = new EmbeddingCache();
-
-    const cacheKey = "uncached-query";
-
-    // Simulate: check cache, miss, call provider, store
-    let result: number[];
-    if (cache.has(cacheKey)) {
-      result = cache.get(cacheKey)!;
-    } else {
-      result = await provider.embedQuery(cacheKey);
-      cache.set(cacheKey, result);
-    }
-
-    expect(embedFn).toHaveBeenCalledOnce();
-    expect(result).toEqual(expectedVec);
-    expect(cache.get(cacheKey)).toEqual(expectedVec);
-  });
-
-  it("batch embedding splits at batch size limit", async () => {
-    const batchSize = 3;
-    const allTexts = ["a", "b", "c", "d", "e", "f", "g"];
-    const batchCalls: string[][] = [];
-
-    const batchFn = vi.fn(async (texts: string[]) => {
-      batchCalls.push([...texts]);
-      return texts.map((_, i) => makeVector(384, i));
-    });
-
-    // Simulate splitting into batches
-    const results: number[][] = [];
-    for (let i = 0; i < allTexts.length; i += batchSize) {
-      const batch = allTexts.slice(i, i + batchSize);
-      const batchResult = await batchFn(batch);
-      results.push(...batchResult);
-    }
-
-    expect(batchCalls).toHaveLength(3); // ceil(7/3) = 3 calls
-    expect(batchCalls[0]).toEqual(["a", "b", "c"]);
-    expect(batchCalls[1]).toEqual(["d", "e", "f"]);
-    expect(batchCalls[2]).toEqual(["g"]);
-    expect(results).toHaveLength(7);
-  });
-
-  it("provider timeout propagates error", async () => {
-    const provider = createMockProvider({
-      embedQuery: vi.fn(async () => {
-        throw new Error("Request timed out after 5000ms");
-      }),
-    });
-
-    await expect(provider.embedQuery("slow query")).rejects.toThrow(
-      "Request timed out",
-    );
-  });
-
-  it("auto-selection tries providers in order", async () => {
-    const providerAttempts: string[] = [];
-
-    // Simulate auto-selection: try ollama first (fails), then fall back to local
-    const tryProviders = async (
-      providerNames: string[],
-    ): Promise<EmbeddingProviderResult> => {
-      for (const name of providerNames) {
-        providerAttempts.push(name);
-        if (name === "ollama") {
-          // Simulate connection refused
-          continue;
-        }
-        if (name === "local") {
-          return { provider: createMockProvider({ id: "local", model: "gte-small" }) };
-        }
-      }
-      return { provider: null, error: "No provider available" };
-    };
-
-    const result = await tryProviders(["ollama", "local"]);
-
-    expect(providerAttempts).toEqual(["ollama", "local"]);
-    expect(result.provider).not.toBeNull();
-    expect(result.provider!.id).toBe("local");
-  });
-
-  it("Ollama provider handles connection refused gracefully", async () => {
-    const createOllamaProvider = async (
-      baseUrl: string,
-    ): Promise<EmbeddingProviderResult> => {
-      try {
-        // Simulate connection attempt
-        throw new Error(`connect ECONNREFUSED ${baseUrl}`);
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error ? err.message : "Unknown error";
-        if (message.includes("ECONNREFUSED")) {
-          return {
-            provider: null,
-            error: `Ollama not available: ${message}`,
-          };
-        }
-        throw err;
-      }
-    };
-
-    const result = await createOllamaProvider("http://127.0.0.1:11434");
 
     expect(result.provider).toBeNull();
-    expect(result.error).toContain("Ollama not available");
-    expect(result.error).toContain("ECONNREFUSED");
+    expect(result.requestedProvider).toBe("auto");
+    expect(result.providerUnavailableReason).toBeDefined();
+    expect(result.providerUnavailableReason).toContain("No API key");
+  });
+
+  it("returns null provider when explicit provider has no API key", async () => {
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+    });
+
+    expect(result.provider).toBeNull();
+    expect(result.requestedProvider).toBe("openai");
+    expect(result.providerUnavailableReason).toBeDefined();
+  });
+
+  it("returns null when both primary and fallback fail with missing keys", async () => {
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      fallback: "gemini",
+    });
+
+    expect(result.provider).toBeNull();
+    expect(result.requestedProvider).toBe("openai");
+    expect(result.fallbackFrom).toBe("openai");
+    expect(result.providerUnavailableReason).toContain("Fallback to gemini failed");
+  });
+
+  it("falls back to secondary provider when primary has no key", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("MISTRAL_API_KEY", "test-mistral-key");
+
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      fallback: "mistral",
+    });
+
+    const provider = requireProvider(result);
+    expect(provider.id).toBe("mistral");
+    expect(result.fallbackFrom).toBe("openai");
+    expect(result.fallbackReason).toContain("No API key");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto selection
+// ---------------------------------------------------------------------------
+
+describe("auto selection", () => {
+  it("prefers openai when OPENAI_API_KEY is set", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+
+    const result = await createEmbeddingProvider({
+      provider: "auto",
+      model: "",
+    });
+
+    const provider = requireProvider(result);
+    expect(provider.id).toBe("openai");
+    expect(result.requestedProvider).toBe("auto");
+  });
+
+  it("falls through to gemini when openai key missing", async () => {
+    const fetchMock = createGeminiFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+
+    const result = await createEmbeddingProvider({
+      provider: "auto",
+      model: "",
+    });
+
+    const provider = requireProvider(result);
+    expect(provider.id).toBe("gemini");
+  });
+
+  it("uses mistral when openai/gemini/voyage are missing", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("MISTRAL_API_KEY", "test-mistral-key");
+
+    const result = await createEmbeddingProvider({
+      provider: "auto",
+      model: "",
+    });
+
+    const provider = requireProvider(result);
+    expect(provider.id).toBe("mistral");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenAI provider
+// ---------------------------------------------------------------------------
+
+describe("openai provider", () => {
+  it("makes correct HTTP call with bearer auth", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      remote: { apiKey: "my-openai-key" },
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.openai.com/v1/embeddings");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer my-openai-key");
+    const body = JSON.parse(init.body as string) as { model: string; input: string[] };
+    expect(body.model).toBe("text-embedding-3-small");
+    expect(body.input).toEqual(["hello"]);
+  });
+
+  it("uses custom baseUrl when provided", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      remote: {
+        apiKey: "key",
+        baseUrl: "https://custom.example.com/v1",
+      },
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("test");
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://custom.example.com/v1/embeddings");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gemini provider
+// ---------------------------------------------------------------------------
+
+describe("gemini provider", () => {
+  it("makes correct HTTP call with x-goog-api-key header", async () => {
+    const fetchMock = createGeminiFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "gemini",
+      model: "text-embedding-004",
+      remote: { apiKey: "gemini-key" },
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+    );
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-goog-api-key"]).toBe("gemini-key");
+  });
+
+  it("resolves GEMINI_API_KEY env var indirection", async () => {
+    const fetchMock = createGeminiFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("GEMINI_API_KEY", "env-gemini-key");
+
+    const result = await createEmbeddingProvider({
+      provider: "gemini",
+      model: "text-embedding-004",
+      remote: { apiKey: "GEMINI_API_KEY" },
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-goog-api-key"]).toBe("env-gemini-key");
+  });
+
+  it("falls back to GOOGLE_API_KEY env var", async () => {
+    const fetchMock = createGeminiFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("GOOGLE_API_KEY", "google-key");
+
+    const result = await createEmbeddingProvider({
+      provider: "gemini",
+      model: "text-embedding-004",
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-goog-api-key"]).toBe("google-key");
+  });
+
+  it("uses batch endpoint for embedBatch", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        embeddings: [{ values: [1, 2, 3] }, { values: [4, 5, 6] }],
+      }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "gemini",
+      model: "text-embedding-004",
+      remote: { apiKey: "key" },
+    });
+
+    const provider = requireProvider(result);
+    const embeddings = await provider.embedBatch(["hello", "world"]);
+
+    expect(embeddings).toHaveLength(2);
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(":batchEmbedContents");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mistral provider
+// ---------------------------------------------------------------------------
+
+describe("mistral provider", () => {
+  it("makes correct HTTP call with bearer auth", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "mistral",
+      model: "mistral/mistral-embed",
+      remote: { apiKey: "mistral-key" },
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.mistral.ai/v1/embeddings");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer mistral-key");
+    const body = JSON.parse(init.body as string) as { model: string };
+    expect(body.model).toBe("mistral-embed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Voyage provider
+// ---------------------------------------------------------------------------
+
+describe("voyage provider", () => {
+  it("makes correct HTTP call with bearer auth and input_type", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "voyage",
+      model: "voyage-4-large",
+      remote: { apiKey: "voyage-key" },
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.voyageai.com/v1/embeddings");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer voyage-key");
+    const body = JSON.parse(init.body as string) as { input_type?: string };
+    expect(body.input_type).toBe("query");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ollama provider
+// ---------------------------------------------------------------------------
+
+describe("ollama provider", () => {
+  it("makes correct HTTP call to local server", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ embedding: [1, 2, 3] }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "ollama",
+      model: "nomic-embed-text",
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:11434/api/embeddings");
+    const body = JSON.parse(init.body as string) as { model: string; prompt: string };
+    expect(body.model).toBe("nomic-embed-text");
+    expect(body.prompt).toBe("hello");
+  });
+
+  it("uses OLLAMA_HOST env var for base URL", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ embedding: [1, 2, 3] }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("OLLAMA_HOST", "http://my-ollama:9999");
+
+    const result = await createEmbeddingProvider({
+      provider: "ollama",
+      model: "nomic-embed-text",
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://my-ollama:9999/api/embeddings");
+  });
+
+  it("adds bearer auth when OLLAMA_API_KEY is set", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ embedding: [1, 2, 3] }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("OLLAMA_API_KEY", "ollama-secret");
+
+    const result = await createEmbeddingProvider({
+      provider: "ollama",
+      model: "nomic-embed-text",
+    });
+
+    const provider = requireProvider(result);
+    await provider.embedQuery("hello");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer ollama-secret");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EmbeddingProvider interface contract
+// ---------------------------------------------------------------------------
+
+describe("EmbeddingProvider interface contract", () => {
+  it("embedQuery returns number[]", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      remote: { apiKey: "key" },
+    });
+
+    const provider = requireProvider(result);
+    const vec = await provider.embedQuery("hello");
+    expect(Array.isArray(vec)).toBe(true);
+    expect(vec.every((v) => typeof v === "number")).toBe(true);
+  });
+
+  it("embedBatch returns number[][]", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{ embedding: [1, 2, 3] }, { embedding: [4, 5, 6] }],
+      }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      remote: { apiKey: "key" },
+    });
+
+    const provider = requireProvider(result);
+    const vecs = await provider.embedBatch(["a", "b"]);
+    expect(Array.isArray(vecs)).toBe(true);
+    expect(vecs).toHaveLength(2);
+    for (const vec of vecs) {
+      expect(Array.isArray(vec)).toBe(true);
+    }
   });
 });
