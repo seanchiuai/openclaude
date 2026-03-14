@@ -53,6 +53,8 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
   const gatewayMcpEnv: Record<string, string> = {};
   if (task.gatewayUrl) gatewayMcpEnv.GATEWAY_URL = task.gatewayUrl;
   if (task.gatewayToken) gatewayMcpEnv.GATEWAY_TOKEN = task.gatewayToken;
+  gatewayMcpEnv.OPENCLAUDE_SESSION_ID = task.sessionId;
+  if (task.sessionId.startsWith("sub-")) gatewayMcpEnv.CHILD_MODE = "true";
 
   const gatewayMcp = task.gatewayUrl
     ? {

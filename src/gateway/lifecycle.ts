@@ -18,6 +18,12 @@ import { killProcessGroup } from "../engine/spawn.js";
 import { createMemoryManager } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
+import { createSubagentRegistry } from "../engine/subagent-registry.js";
+import type { SubagentRegistry } from "../engine/subagent-registry.js";
+import type { SubagentRun } from "../engine/subagent-registry.js";
+import { createAnnouncePipeline } from "../engine/subagent-announce.js";
+import { buildChildSystemPrompt } from "../engine/system-prompt.js";
+import { join } from "node:path";
 import type { OpenClaudeConfig } from "../config/types.js";
 import type { ProcessPool } from "../engine/pool.js";
 import type { ChannelAdapter } from "../channels/types.js";
@@ -32,6 +38,7 @@ export interface Gateway {
   channels: Map<string, ChannelAdapter>;
   memoryManager?: MemoryManager;
   cronService?: CronService;
+  subagentRegistry?: SubagentRegistry;
   shutdown: () => Promise<void>;
 }
 
@@ -54,6 +61,13 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   // Fire-and-forget initial memory sync
   memoryManager.sync().catch((err: unknown) => {
     log.warn("Initial memory sync failed", { error: err instanceof Error ? err.message : String(err) });
+  });
+
+  // Subagent registry
+  const subagentRegistry = createSubagentRegistry(join(paths.base, "subagent-runs.json"));
+  subagentRegistry.reconcileOrphans((sessionId) => {
+    const session = pool.getSession(sessionId);
+    return session?.status === "running";
   });
 
   // Helper to deliver text to a channel adapter
@@ -159,6 +173,64 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     return rawRouter(msg, onEvent);
   };
 
+  // Announce pipeline — resumes parent when children complete
+  const announcePipeline = createAnnouncePipeline({
+    resumeParent: async (_parentSessionId, runs, message) => {
+      // Wait for parent process to exit before resuming
+      const parentCompletion = pool.getCompletion(runs[0].parentSessionId);
+      if (parentCompletion) {
+        await parentCompletion;
+      }
+
+      // Route result as a system message through the router
+      await rawRouter({
+        channel: "system",
+        chatId: runs[0].parentSessionKey,
+        userId: "system",
+        username: "system",
+        text: message,
+        source: "system",
+      });
+
+      // Mark all runs as announced
+      for (const run of runs) {
+        subagentRegistry.markAnnounced(run.runId);
+      }
+    },
+  });
+
+  // Spawn handler — called when a new subagent is requested via HTTP API
+  const onSubagentSpawn = (run: SubagentRun) => {
+    const childSystemPrompt = buildChildSystemPrompt(run.task, run.parentSessionId);
+
+    pool.submit(
+      {
+        sessionId: run.childSessionId,
+        prompt: run.task,
+        timeout: 300_000,
+        systemPrompt: childSystemPrompt,
+        mcpConfig: config.mcp,
+        gatewayUrl,
+        gatewayToken,
+      },
+    ).then((result) => {
+      subagentRegistry.endRun(run.runId, "completed", result.text);
+      const updatedRun = subagentRegistry.get(run.runId)!;
+      updatedRun.usage = result.usage;
+      updatedRun.childClaudeSessionId = result.claudeSessionId;
+      announcePipeline.enqueue(updatedRun);
+    }).catch((err) => {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      subagentRegistry.endRun(run.runId, "failed", undefined, errorMsg);
+      const updatedRun = subagentRegistry.get(run.runId)!;
+      announcePipeline.enqueue(updatedRun);
+    });
+
+    // Update status to running
+    const r = subagentRegistry.get(run.runId);
+    if (r) { r.status = "running"; r.startedAt = Date.now(); }
+  };
+
   // Create auth middleware
   const authResult = createAuthMiddleware(config.gateway.auth);
 
@@ -172,6 +244,8 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     memoryManager,
     channelAdapters: channels,
     authMiddleware: authResult.middleware,
+    subagentRegistry,
+    onSubagentSpawn,
   });
   const server = startHttpServer(app, gatewayPort);
   const startedAt = Date.now();
@@ -287,7 +361,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   process.on("uncaughtException", onCrash);
   process.on("unhandledRejection", onCrash);
 
-  return { config, pool, channels, memoryManager, cronService, shutdown };
+  return { config, pool, channels, memoryManager, cronService, subagentRegistry, shutdown };
 }
 
 function writePidFile(): void {
