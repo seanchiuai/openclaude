@@ -1,7 +1,6 @@
 /**
  * Memory flush: save durable facts before context compaction.
  *
- * Adapted from OpenClaw's src/auto-reply/reply/memory-flush.ts.
  * Since openclaude uses the CLI (not direct API), we can't inject silent
  * agentic turns. Instead, shouldFlushMemory() is checked between turns
  * and flushSessionToMemory() writes facts to disk directly.
@@ -10,7 +9,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChatSession } from "../router/types.js";
 
-// --- Constants (from OpenClaw) ---
+// --- Constants ---
 
 /** Default context window size in tokens. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;

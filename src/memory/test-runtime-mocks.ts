@@ -1,7 +1,6 @@
 /**
  * Test runtime mocks for memory manager tests.
  * Mocks chokidar and sqlite-vec to avoid external dependencies in unit tests.
- * Ported from OpenClaw's test-runtime-mocks.ts.
  */
 import { vi } from "vitest";
 

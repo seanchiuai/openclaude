@@ -1,6 +1,5 @@
 /**
  * Tests for readonly database recovery — sqlite READONLY error detection and retry.
- * Ported from OpenClaw's manager.readonly-recovery.test.ts.
  */
 import fs from "node:fs/promises";
 import os from "node:os";

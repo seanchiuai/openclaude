@@ -1,6 +1,5 @@
 /**
  * Tests that vector rows are deleted before re-insertion (dedupe correctness).
- * Ported from OpenClaw's manager.vector-dedupe.test.ts.
  */
 import fs from "node:fs/promises";
 import os from "node:os";

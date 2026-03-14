@@ -1,6 +1,5 @@
 /**
  * Tests for MemoryIndexManager.readFile — path traversal protection and line slicing.
- * Ported from OpenClaw's manager.read-file.test.ts.
  */
 import fs from "node:fs/promises";
 import os from "node:os";

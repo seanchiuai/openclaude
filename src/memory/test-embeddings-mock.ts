@@ -1,6 +1,5 @@
 /**
  * Shared embedding mock helpers for memory manager tests.
- * Ported from OpenClaw's embedding.test-mocks.ts, adapted for OpenClaude.
  */
 import { vi } from "vitest";
 import "./test-runtime-mocks.js";

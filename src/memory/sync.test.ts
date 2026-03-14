@@ -1,19 +1,6 @@
 /**
- * Contract tests for src/memory/sync.ts
- *
- * This module syncs markdown files from disk into the SQLite index.
- *
- * Expected interface:
- *   interface SyncDeps {
- *     db: DatabaseSync;
- *     workspaceDir: string;
- *     chunking?: { tokens: number; overlap: number };
- *   }
- *   function syncMemoryFiles(deps: SyncDeps): Promise<SyncResult>
- *   // SyncResult: { added: number; updated: number; removed: number; unchanged: number }
- *
- * The implementation module does not exist yet. These tests define the
- * contract that syncMemoryFiles must satisfy once implemented.
+ * Tests for memory file sync — syncs markdown files from disk into the SQLite index.
+ * Implementation: src/memory/manager-sync-ops.ts
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -42,10 +29,8 @@ interface SyncResult {
 }
 
 // ---------------------------------------------------------------------------
-// Mock implementation — stands in until the real module exists.
-// This inline implementation follows the contract so tests exercise it.
-// When the real src/memory/sync.ts is written the mock can be replaced by:
-//   import { syncMemoryFiles } from "./sync.js";
+// Inline sync implementation for testing the contract directly.
+// The production implementation lives in src/memory/manager-sync-ops.ts.
 // ---------------------------------------------------------------------------
 
 async function syncMemoryFiles(deps: SyncDeps): Promise<SyncResult> {

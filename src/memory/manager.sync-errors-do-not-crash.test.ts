@@ -1,6 +1,5 @@
 /**
  * Tests that sync failures in watch-triggered syncs do not cause unhandled rejections.
- * Ported from OpenClaw's manager.sync-errors-do-not-crash.test.ts.
  */
 import fs from "node:fs/promises";
 import os from "node:os";

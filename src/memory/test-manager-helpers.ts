@@ -1,6 +1,5 @@
 /**
  * Shared test helpers for creating MemoryIndexManager instances in tests.
- * Ported from OpenClaw's test-manager-helpers.ts, adapted for OpenClaude's MemoryConfig.
  */
 import path from "node:path";
 import type { MemoryConfig } from "../config/types.js";
