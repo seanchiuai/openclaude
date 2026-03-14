@@ -31,6 +31,7 @@ import type { MemorySearchManager } from "../memory/index.js";
 import type { CronService } from "../cron/index.js";
 import type { HeartbeatRunner } from "../cron/heartbeat.js";
 import type { CronDeliveryTarget } from "../cron/types.js";
+import type { OnStreamEvent } from "../engine/types.js";
 
 export interface Gateway {
   config: OpenClaudeConfig;
@@ -278,6 +279,25 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     const { createSlackChannel } = await import("../channels/slack/index.js");
 
     const slack = createSlackChannel(config.channels.slack, async (msg) => {
+      const { createStreamingReply } = await import("../channels/streaming.js");
+      const streamingReply = createStreamingReply({
+        sendText: async (text) => {
+          const result = await slack.sendText(msg.chatId, text);
+          return { messageId: result.messageId };
+        },
+        editMessage: (msgId, text) => slack.editMessage!(msg.chatId, msgId, text),
+      });
+
+      let accumulatedText = "";
+      const onEvent: OnStreamEvent = (event) => {
+        if (event.type === "text") {
+          accumulatedText += (accumulatedText ? "\n\n" : "") + event.text;
+          streamingReply.update(accumulatedText);
+        } else if (event.type === "status") {
+          streamingReply.status(event.message);
+        }
+      };
+
       const response = await router({
         channel: msg.channel,
         chatId: msg.chatId,
@@ -285,9 +305,14 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
         username: msg.username,
         text: msg.text,
         source: msg.source as "user" | "cron" | "system",
-      });
+      }, onEvent);
+
       if (response && msg.chatId) {
-        await slack.sendText(msg.chatId, response);
+        if (accumulatedText && !streamingReply.failed()) {
+          await streamingReply.finalize(response);
+        } else {
+          await slack.sendText(msg.chatId, response);
+        }
       }
       return response;
     });
