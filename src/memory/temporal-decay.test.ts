@@ -1,198 +1,173 @@
-/**
- * Contract: Temporal Decay for Memory Search
- *
- * Exponential decay: multiplier = exp(-lambda * ageInDays)
- * where lambda = ln(2) / halfLifeDays (default 30)
- *
- * - Age 0 days → multiplier ~1.0
- * - Age 30 days (half-life) → multiplier ~0.5
- * - Age 60 days → multiplier ~0.25
- * - Age 365 days → multiplier near 0
- * - Evergreen files (MEMORY.md, non-dated) → multiplier always 1.0
- * - Decay applied at query time (stored scores unchanged)
- * - Custom half-life parameter works
- *
- * Interface (to be implemented):
- *   calculateTemporalDecayMultiplier({ ageInDays, halfLifeDays }) → number
- *   applyTemporalDecayToScore({ score, ageInDays, halfLifeDays }) → number
- *   toDecayLambda(halfLifeDays) → number
- */
-import { describe, it, expect } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { mergeHybridResults } from "./hybrid.js";
+import {
+  applyTemporalDecayToHybridResults,
+  applyTemporalDecayToScore,
+  calculateTemporalDecayMultiplier,
+} from "./temporal-decay.js";
 
-// These will be imported from the implementation when it exists.
-// For now, define the pure math functions inline as the contract spec.
-// Implementation MUST match these exact formulas.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NOW_MS = Date.UTC(2026, 1, 10, 0, 0, 0);
 
-function toDecayLambda(halfLifeDays: number): number {
-  if (!Number.isFinite(halfLifeDays) || halfLifeDays <= 0) return 0;
-  return Math.LN2 / halfLifeDays;
+const tempDirs: string[] = [];
+
+async function makeTempDir(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaude-temporal-decay-"));
+  tempDirs.push(dir);
+  return dir;
 }
 
-function calculateTemporalDecayMultiplier(params: {
-  ageInDays: number;
-  halfLifeDays: number;
-}): number {
-  const lambda = toDecayLambda(params.halfLifeDays);
-  const clampedAge = Math.max(0, params.ageInDays);
-  if (lambda <= 0 || !Number.isFinite(clampedAge)) return 1;
-  return Math.exp(-lambda * clampedAge);
-}
-
-function applyTemporalDecayToScore(params: {
-  score: number;
-  ageInDays: number;
-  halfLifeDays: number;
-}): number {
-  return params.score * calculateTemporalDecayMultiplier(params);
-}
-
-describe("toDecayLambda", () => {
-  it("computes lambda = ln(2) / halfLifeDays", () => {
-    expect(toDecayLambda(30)).toBeCloseTo(Math.LN2 / 30);
-  });
-
-  it("returns 0 for non-positive halfLifeDays", () => {
-    expect(toDecayLambda(0)).toBe(0);
-    expect(toDecayLambda(-10)).toBe(0);
-  });
-
-  it("returns 0 for non-finite halfLifeDays", () => {
-    expect(toDecayLambda(Infinity)).toBe(0);
-    expect(toDecayLambda(NaN)).toBe(0);
-  });
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map(async (dir) => {
+      await fs.rm(dir, { recursive: true, force: true });
+    }),
+  );
 });
 
-describe("calculateTemporalDecayMultiplier", () => {
-  const DEFAULT_HALF_LIFE = 30;
+describe("temporal decay", () => {
+  it("matches exponential decay formula", () => {
+    const halfLifeDays = 30;
+    const ageInDays = 10;
+    const lambda = Math.LN2 / halfLifeDays;
+    const expectedMultiplier = Math.exp(-lambda * ageInDays);
 
-  it("age 0 days → multiplier ~1.0", () => {
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays: 0,
-      halfLifeDays: DEFAULT_HALF_LIFE,
-    });
-    expect(m).toBeCloseTo(1.0, 5);
+    expect(calculateTemporalDecayMultiplier({ ageInDays, halfLifeDays })).toBeCloseTo(
+      expectedMultiplier,
+    );
+    expect(applyTemporalDecayToScore({ score: 0.8, ageInDays, halfLifeDays })).toBeCloseTo(
+      0.8 * expectedMultiplier,
+    );
   });
 
-  it("age 30 days (half-life) → multiplier ~0.5", () => {
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays: 30,
-      halfLifeDays: DEFAULT_HALF_LIFE,
-    });
-    expect(m).toBeCloseTo(0.5, 5);
+  it("is 0.5 exactly at half-life", () => {
+    expect(calculateTemporalDecayMultiplier({ ageInDays: 30, halfLifeDays: 30 })).toBeCloseTo(0.5);
   });
 
-  it("age 60 days (2x half-life) → multiplier ~0.25", () => {
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays: 60,
-      halfLifeDays: DEFAULT_HALF_LIFE,
+  it("does not decay evergreen memory files", async () => {
+    const dir = await makeTempDir();
+
+    const rootMemoryPath = path.join(dir, "MEMORY.md");
+    const topicPath = path.join(dir, "memory", "projects.md");
+    await fs.mkdir(path.dirname(topicPath), { recursive: true });
+    await fs.writeFile(rootMemoryPath, "evergreen");
+    await fs.writeFile(topicPath, "topic evergreen");
+
+    const veryOld = new Date(Date.UTC(2010, 0, 1));
+    await fs.utimes(rootMemoryPath, veryOld, veryOld);
+    await fs.utimes(topicPath, veryOld, veryOld);
+
+    const decayed = await applyTemporalDecayToHybridResults({
+      results: [
+        { path: "MEMORY.md", score: 1, source: "memory" },
+        { path: "memory/projects.md", score: 0.75, source: "memory" },
+      ],
+      workspaceDir: dir,
+      temporalDecay: { enabled: true, halfLifeDays: 30 },
+      nowMs: NOW_MS,
     });
-    expect(m).toBeCloseTo(0.25, 5);
+
+    expect(decayed[0]?.score).toBeCloseTo(1);
+    expect(decayed[1]?.score).toBeCloseTo(0.75);
   });
 
-  it("age 365 days → multiplier near 0", () => {
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays: 365,
-      halfLifeDays: DEFAULT_HALF_LIFE,
+  it("applies decay in hybrid merging before ranking", async () => {
+    const merged = await mergeHybridResults({
+      vectorWeight: 1,
+      textWeight: 0,
+      temporalDecay: { enabled: true, halfLifeDays: 30 },
+      mmr: { enabled: false },
+      nowMs: NOW_MS,
+      vector: [
+        {
+          id: "old",
+          path: "memory/2025-01-01.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet: "old but high",
+          vectorScore: 0.95,
+        },
+        {
+          id: "new",
+          path: "memory/2026-02-10.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet: "new and relevant",
+          vectorScore: 0.8,
+        },
+      ],
+      keyword: [],
     });
-    expect(m).toBeLessThan(0.001);
-    expect(m).toBeGreaterThan(0);
+
+    expect(merged[0]?.path).toBe("memory/2026-02-10.md");
+    expect(merged[0]?.score ?? 0).toBeGreaterThan(merged[1]?.score ?? 0);
   });
 
-  it("negative age clamped to 0 → multiplier 1.0", () => {
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays: -5,
-      halfLifeDays: DEFAULT_HALF_LIFE,
+  it("handles future dates, zero age, and very old memories", async () => {
+    const merged = await mergeHybridResults({
+      vectorWeight: 1,
+      textWeight: 0,
+      temporalDecay: { enabled: true, halfLifeDays: 30 },
+      mmr: { enabled: false },
+      nowMs: NOW_MS,
+      vector: [
+        {
+          id: "future",
+          path: "memory/2099-01-01.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet: "future",
+          vectorScore: 0.9,
+        },
+        {
+          id: "today",
+          path: "memory/2026-02-10.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet: "today",
+          vectorScore: 0.8,
+        },
+        {
+          id: "very-old",
+          path: "memory/2000-01-01.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet: "ancient",
+          vectorScore: 1,
+        },
+      ],
+      keyword: [],
     });
-    expect(m).toBeCloseTo(1.0, 5);
+
+    const byPath = new Map(merged.map((entry) => [entry.path, entry]));
+    expect(byPath.get("memory/2099-01-01.md")?.score).toBeCloseTo(0.9);
+    expect(byPath.get("memory/2026-02-10.md")?.score).toBeCloseTo(0.8);
+    expect(byPath.get("memory/2000-01-01.md")?.score ?? 1).toBeLessThan(0.001);
   });
 
-  it("custom half-life parameter works", () => {
-    // 7-day half-life: at 7 days, multiplier should be ~0.5
-    const m7 = calculateTemporalDecayMultiplier({
-      ageInDays: 7,
-      halfLifeDays: 7,
+  it("uses file mtime fallback for non-memory sources", async () => {
+    const dir = await makeTempDir();
+    const sessionPath = path.join(dir, "sessions", "thread.jsonl");
+    await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+    await fs.writeFile(sessionPath, "{}\n");
+    const oldMtime = new Date(NOW_MS - 30 * DAY_MS);
+    await fs.utimes(sessionPath, oldMtime, oldMtime);
+
+    const decayed = await applyTemporalDecayToHybridResults({
+      results: [{ path: "sessions/thread.jsonl", score: 1, source: "sessions" }],
+      workspaceDir: dir,
+      temporalDecay: { enabled: true, halfLifeDays: 30 },
+      nowMs: NOW_MS,
     });
-    expect(m7).toBeCloseTo(0.5, 5);
 
-    // 90-day half-life: at 90 days, multiplier should be ~0.5
-    const m90 = calculateTemporalDecayMultiplier({
-      ageInDays: 90,
-      halfLifeDays: 90,
-    });
-    expect(m90).toBeCloseTo(0.5, 5);
-  });
-
-  it("zero or invalid halfLifeDays → no decay (multiplier 1.0)", () => {
-    expect(
-      calculateTemporalDecayMultiplier({ ageInDays: 100, halfLifeDays: 0 }),
-    ).toBe(1);
-    expect(
-      calculateTemporalDecayMultiplier({ ageInDays: 100, halfLifeDays: -1 }),
-    ).toBe(1);
-  });
-});
-
-describe("applyTemporalDecayToScore", () => {
-  it("decay applied at query time — score * multiplier", () => {
-    const decayed = applyTemporalDecayToScore({
-      score: 0.8,
-      ageInDays: 30,
-      halfLifeDays: 30,
-    });
-    // 0.8 * 0.5 = 0.4
-    expect(decayed).toBeCloseTo(0.4, 5);
-  });
-
-  it("score 1.0 at age 0 → 1.0", () => {
-    const decayed = applyTemporalDecayToScore({
-      score: 1.0,
-      ageInDays: 0,
-      halfLifeDays: 30,
-    });
-    expect(decayed).toBeCloseTo(1.0, 5);
-  });
-
-  it("score 0.0 → always 0.0 regardless of age", () => {
-    const decayed = applyTemporalDecayToScore({
-      score: 0.0,
-      ageInDays: 5,
-      halfLifeDays: 30,
-    });
-    expect(decayed).toBe(0);
-  });
-});
-
-describe("evergreen behavior (integration contract)", () => {
-  // These test the contract that evergreen files should NOT have decay applied.
-  // The implementation will parse paths to determine evergreen status.
-  // Evergreen paths: MEMORY.md, memory.md, memory/topic.md (non-dated)
-  // Dated paths: memory/2026-03-12.md → decay applies based on date
-
-  it("evergreen flag → multiplier always 1.0 (no decay)", () => {
-    // When a file is identified as evergreen, its age is effectively null
-    // and no decay is applied. We test this by showing that without age,
-    // the multiplier is 1.0.
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays: 0,
-      halfLifeDays: 30,
-    });
-    expect(m).toBe(1);
-  });
-
-  it("dated path age calculation: memory/2026-01-01.md", () => {
-    // Contract: YYYY-MM-DD in filename → age computed from date
-    // This is a functional test of the formula, not the path parser
-    const now = new Date("2026-03-12T00:00:00Z").getTime();
-    const fileDate = new Date("2026-01-01T00:00:00Z").getTime();
-    const ageMs = now - fileDate;
-    const ageInDays = ageMs / (24 * 60 * 60 * 1000); // ~70 days
-
-    const m = calculateTemporalDecayMultiplier({
-      ageInDays,
-      halfLifeDays: 30,
-    });
-    // ~70 days with 30-day half-life → should be quite low
-    expect(m).toBeLessThan(0.3);
-    expect(m).toBeGreaterThan(0);
+    expect(decayed[0]?.score).toBeCloseTo(0.5, 2);
   });
 });

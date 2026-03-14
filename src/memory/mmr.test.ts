@@ -1,151 +1,390 @@
-/**
- * Contract: Maximal Marginal Relevance (MMR) Re-ranking
- *
- * MMR balances relevance with diversity:
- *   mmr_score = lambda * relevance - (1-lambda) * max_similarity_to_selected
- *
- * - lambda=1.0 → pure relevance order (no diversity penalty)
- * - lambda=0.0 → maximum diversity (ignore relevance)
- * - Near-duplicate results pushed down in ranking
- * - Single result → returned as-is
- * - Empty input → empty output
- * - Similarity: Jaccard coefficient on lowercased alphanumeric tokens
- */
-import { describe, expect, it } from "vitest";
-import { tokenize, jaccardSimilarity, applyMMR } from "./mmr.js";
+import { describe, it, expect } from "vitest";
+import {
+  tokenize,
+  jaccardSimilarity,
+  textSimilarity,
+  computeMMRScore,
+  mmrRerank,
+  applyMMRToHybridResults,
+  DEFAULT_MMR_CONFIG,
+  type MMRItem,
+} from "./mmr.js";
 
 describe("tokenize", () => {
-  it("extracts lowercase alphanumeric tokens", () => {
-    const tokens = tokenize("Hello World! This is Test-123.");
-    expect(tokens).toEqual(new Set(["hello", "world", "this", "is", "test", "123"]));
-  });
+  it("normalizes, filters, and deduplicates token sets", () => {
+    const cases = [
+      {
+        name: "alphanumeric lowercase",
+        input: "Hello World 123",
+        expected: ["hello", "world", "123"],
+      },
+      { name: "empty string", input: "", expected: [] },
+      { name: "special chars only", input: "!@#$%^&*()", expected: [] },
+      {
+        name: "underscores",
+        input: "hello_world test_case",
+        expected: ["hello_world", "test_case"],
+      },
+      {
+        name: "dedupe repeated tokens",
+        input: "hello hello world world",
+        expected: ["hello", "world"],
+      },
+    ] as const;
 
-  it("returns empty set for empty string", () => {
-    expect(tokenize("")).toEqual(new Set());
-  });
-
-  it("handles special characters", () => {
-    const tokens = tokenize("foo_bar@baz.qux");
-    expect(tokens).toEqual(new Set(["foo", "bar", "baz", "qux"]));
-  });
-
-  it("deduplicates tokens", () => {
-    const tokens = tokenize("hello hello HELLO");
-    expect(tokens.size).toBe(1);
-    expect(tokens.has("hello")).toBe(true);
-  });
-
-  it("handles punctuation-only string", () => {
-    expect(tokenize("!@#$%^&*()")).toEqual(new Set());
+    for (const testCase of cases) {
+      expect(tokenize(testCase.input), testCase.name).toEqual(new Set(testCase.expected));
+    }
   });
 });
 
 describe("jaccardSimilarity", () => {
-  it("returns 1 for identical sets", () => {
-    const set = new Set(["a", "b", "c"]);
-    expect(jaccardSimilarity(set, set)).toBe(1);
+  it("computes expected scores for overlap edge cases", () => {
+    const cases = [
+      {
+        name: "identical sets",
+        left: new Set(["a", "b", "c"]),
+        right: new Set(["a", "b", "c"]),
+        expected: 1,
+      },
+      { name: "disjoint sets", left: new Set(["a", "b"]), right: new Set(["c", "d"]), expected: 0 },
+      { name: "two empty sets", left: new Set<string>(), right: new Set<string>(), expected: 1 },
+      {
+        name: "left non-empty right empty",
+        left: new Set(["a"]),
+        right: new Set<string>(),
+        expected: 0,
+      },
+      {
+        name: "left empty right non-empty",
+        left: new Set<string>(),
+        right: new Set(["a"]),
+        expected: 0,
+      },
+      {
+        name: "partial overlap",
+        left: new Set(["a", "b", "c"]),
+        right: new Set(["b", "c", "d"]),
+        expected: 0.5,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      expect(jaccardSimilarity(testCase.left, testCase.right), testCase.name).toBe(
+        testCase.expected,
+      );
+    }
   });
 
-  it("returns 0 for disjoint sets", () => {
+  it("is symmetric", () => {
     const setA = new Set(["a", "b"]);
-    const setB = new Set(["c", "d"]);
-    expect(jaccardSimilarity(setA, setB)).toBe(0);
-  });
-
-  it("calculates partial overlap correctly", () => {
-    const setA = new Set(["a", "b", "c"]);
-    const setB = new Set(["b", "c", "d"]);
-    // intersection=2, union=4
-    expect(jaccardSimilarity(setA, setB)).toBeCloseTo(0.5, 5);
-  });
-
-  it("returns 1 for two empty sets", () => {
-    expect(jaccardSimilarity(new Set(), new Set())).toBe(1);
-  });
-
-  it("returns 0 when one set is empty", () => {
-    expect(jaccardSimilarity(new Set(["a"]), new Set())).toBe(0);
-    expect(jaccardSimilarity(new Set(), new Set(["a"]))).toBe(0);
+    const setB = new Set(["b", "c"]);
+    expect(jaccardSimilarity(setA, setB)).toBe(jaccardSimilarity(setB, setA));
   });
 });
 
-describe("applyMMR", () => {
-  const makeResult = (id: string, score: number, snippet: string) => ({
-    score,
-    snippet,
-    path: `memory/${id}.md`,
-    startLine: 1,
+describe("textSimilarity", () => {
+  it("computes expected text-level similarity cases", () => {
+    const cases = [
+      { name: "identical", left: "hello world", right: "hello world", expected: 1 },
+      { name: "same words reordered", left: "hello world", right: "world hello", expected: 1 },
+      { name: "different text", left: "hello world", right: "foo bar", expected: 0 },
+      { name: "case insensitive", left: "Hello World", right: "hello world", expected: 1 },
+    ] as const;
+
+    for (const testCase of cases) {
+      expect(textSimilarity(testCase.left, testCase.right), testCase.name).toBe(testCase.expected);
+    }
+  });
+});
+
+describe("computeMMRScore", () => {
+  it("balances relevance and diversity across lambda settings", () => {
+    const cases = [
+      {
+        name: "lambda=1 relevance only",
+        relevance: 0.8,
+        similarity: 0.5,
+        lambda: 1,
+        expected: 0.8,
+      },
+      {
+        name: "lambda=0 diversity only",
+        relevance: 0.8,
+        similarity: 0.5,
+        lambda: 0,
+        expected: -0.5,
+      },
+      { name: "lambda=0.5 mixed", relevance: 0.8, similarity: 0.6, lambda: 0.5, expected: 0.1 },
+      { name: "default lambda math", relevance: 1.0, similarity: 0.5, lambda: 0.7, expected: 0.55 },
+    ] as const;
+
+    for (const testCase of cases) {
+      expect(
+        computeMMRScore(testCase.relevance, testCase.similarity, testCase.lambda),
+        testCase.name,
+      ).toBeCloseTo(testCase.expected);
+    }
+  });
+});
+
+describe("empty input behavior", () => {
+  it("returns empty array for empty input", () => {
+    expect(mmrRerank([])).toEqual([]);
+    expect(applyMMRToHybridResults([])).toEqual([]);
+  });
+});
+
+describe("mmrRerank", () => {
+  describe("edge cases", () => {
+    it("returns single item unchanged", () => {
+      const items: MMRItem[] = [{ id: "1", score: 0.9, content: "hello" }];
+      expect(mmrRerank(items)).toEqual(items);
+    });
+
+    it("returns copy, not original array", () => {
+      const items: MMRItem[] = [{ id: "1", score: 0.9, content: "hello" }];
+      const result = mmrRerank(items);
+      expect(result).not.toBe(items);
+    });
+
+    it("returns items unchanged when disabled", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 0.9, content: "hello" },
+        { id: "2", score: 0.8, content: "hello" },
+      ];
+      const result = mmrRerank(items, { enabled: false });
+      expect(result).toEqual(items);
+    });
   });
 
-  it("empty input → empty output", () => {
-    const output = applyMMR([], { enabled: true });
-    expect(output).toEqual([]);
-  });
-
-  it("returns copy when disabled", () => {
-    const results = [makeResult("a", 0.9, "hello world"), makeResult("b", 0.5, "foo bar")];
-    const output = applyMMR(results, { enabled: false });
-    expect(output).toEqual(results);
-    // Should be a copy, not same reference
-    expect(output).not.toBe(results);
-  });
-
-  it("single result → returned as-is", () => {
-    const results = [makeResult("a", 0.9, "hello world")];
-    const output = applyMMR(results, { enabled: true, lambda: 0.7 });
-    expect(output).toHaveLength(1);
-    expect(output[0].score).toBe(0.9);
-  });
-
-  it("lambda=1.0 → pure relevance order", () => {
-    const results = [
-      makeResult("a", 0.9, "hello world"),
-      makeResult("b", 0.7, "hello world"),
-      makeResult("c", 0.5, "hello world"),
+  describe("lambda edge cases", () => {
+    const diverseItems: MMRItem[] = [
+      { id: "1", score: 1.0, content: "apple banana cherry" },
+      { id: "2", score: 0.9, content: "apple banana date" },
+      { id: "3", score: 0.8, content: "elderberry fig grape" },
     ];
 
-    const mmrResults = applyMMR(results, { enabled: true, lambda: 1.0 });
-    expect(mmrResults[0].path).toBe("memory/a.md");
-    expect(mmrResults[1].path).toBe("memory/b.md");
-    expect(mmrResults[2].path).toBe("memory/c.md");
+    it("lambda=1 returns pure relevance order", () => {
+      const result = mmrRerank(diverseItems, { lambda: 1 });
+      expect(result.map((i) => i.id)).toEqual(["1", "2", "3"]);
+    });
+
+    it("lambda=0 maximizes diversity", () => {
+      const result = mmrRerank(diverseItems, { enabled: true, lambda: 0 });
+      // First item is still highest score (no penalty yet)
+      expect(result[0].id).toBe("1");
+      // Second should be most different from first
+      expect(result[1].id).toBe("3"); // elderberry... is most different
+    });
+
+    it("clamps lambda > 1 to 1", () => {
+      const result = mmrRerank(diverseItems, { lambda: 1.5 });
+      expect(result.map((i) => i.id)).toEqual(["1", "2", "3"]);
+    });
+
+    it("clamps lambda < 0 to 0", () => {
+      const result = mmrRerank(diverseItems, { enabled: true, lambda: -0.5 });
+      expect(result[0].id).toBe("1");
+      expect(result[1].id).toBe("3");
+    });
   });
 
-  it("lambda=0.0 → maximum diversity (near-duplicates penalized)", () => {
-    const results = [
-      makeResult("a", 0.95, "typescript memory search system"),
-      makeResult("b", 0.90, "typescript memory search algorithm"),
-      makeResult("c", 0.50, "python web framework django tutorial"),
-    ];
+  describe("diversity behavior", () => {
+    it("promotes diverse results over similar high-scoring ones", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 1.0, content: "machine learning neural networks" },
+        { id: "2", score: 0.95, content: "machine learning deep learning" },
+        { id: "3", score: 0.9, content: "database systems sql queries" },
+        { id: "4", score: 0.85, content: "machine learning algorithms" },
+      ];
 
-    const mmrResults = applyMMR(results, { enabled: true, lambda: 0.0 });
-    expect(mmrResults).toHaveLength(3);
-    // With pure diversity, after first pick, diverse items promoted
+      const result = mmrRerank(items, { enabled: true, lambda: 0.5 });
+
+      // First is always highest score
+      expect(result[0].id).toBe("1");
+      // Second should be the diverse database item, not another ML item
+      expect(result[1].id).toBe("3");
+    });
+
+    it("handles items with identical content", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 1.0, content: "identical content" },
+        { id: "2", score: 0.9, content: "identical content" },
+        { id: "3", score: 0.8, content: "different stuff" },
+      ];
+
+      const result = mmrRerank(items, { enabled: true, lambda: 0.5 });
+      expect(result[0].id).toBe("1");
+      // Second should be different, not identical duplicate
+      expect(result[1].id).toBe("3");
+    });
+
+    it("handles all identical content gracefully", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 1.0, content: "same" },
+        { id: "2", score: 0.9, content: "same" },
+        { id: "3", score: 0.8, content: "same" },
+      ];
+
+      const result = mmrRerank(items, { lambda: 0.7 });
+      // Should still complete without error, order by score as tiebreaker
+      expect(result).toHaveLength(3);
+    });
   });
 
-  it("near-duplicate results pushed down in ranking", () => {
-    const results = [
-      makeResult("a", 0.95, "typescript memory search system"),
-      makeResult("b", 0.90, "typescript memory search algorithm"),
-      makeResult("c", 0.85, "python web framework django"),
-    ];
+  describe("tie-breaking", () => {
+    it("uses original score as tiebreaker", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 1.0, content: "unique content one" },
+        { id: "2", score: 0.9, content: "unique content two" },
+        { id: "3", score: 0.8, content: "unique content three" },
+      ];
 
-    const mmrResults = applyMMR(results, { enabled: true, lambda: 0.5 });
+      // With very different content and lambda=1, should be pure score order
+      const result = mmrRerank(items, { lambda: 1 });
+      expect(result.map((i) => i.id)).toEqual(["1", "2", "3"]);
+    });
 
-    expect(mmrResults).toHaveLength(3);
-    // First should still be highest scored
-    expect(mmrResults[0].path).toBe("memory/a.md");
-    // With lambda=0.5, diverse result "c" should be promoted over similar "b"
-    expect(mmrResults[1].path).toBe("memory/c.md");
-    expect(mmrResults[2].path).toBe("memory/b.md");
+    it("preserves all items even with same MMR scores", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 0.5, content: "a" },
+        { id: "2", score: 0.5, content: "b" },
+        { id: "3", score: 0.5, content: "c" },
+      ];
+
+      const result = mmrRerank(items, { lambda: 0.7 });
+      expect(result).toHaveLength(3);
+      expect(new Set(result.map((i) => i.id))).toEqual(new Set(["1", "2", "3"]));
+    });
   });
 
-  it("output length equals input length (respects top_k)", () => {
-    const results = [
-      makeResult("a", 0.9, "aaa bbb"),
-      makeResult("b", 0.8, "ccc ddd"),
-      makeResult("c", 0.7, "eee fff"),
+  describe("score normalization", () => {
+    it("handles items with same scores", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: 0.5, content: "hello world" },
+        { id: "2", score: 0.5, content: "foo bar" },
+      ];
+
+      const result = mmrRerank(items, { lambda: 0.7 });
+      expect(result).toHaveLength(2);
+    });
+
+    it("handles negative scores", () => {
+      const items: MMRItem[] = [
+        { id: "1", score: -0.5, content: "hello world" },
+        { id: "2", score: -1.0, content: "foo bar" },
+      ];
+
+      const result = mmrRerank(items, { lambda: 0.7 });
+      expect(result).toHaveLength(2);
+      // Higher score (less negative) should come first
+      expect(result[0].id).toBe("1");
+    });
+  });
+});
+
+describe("applyMMRToHybridResults", () => {
+  type HybridResult = {
+    path: string;
+    startLine: number;
+    endLine: number;
+    score: number;
+    snippet: string;
+    source: string;
+  };
+
+  it("preserves all original fields", () => {
+    const results: HybridResult[] = [
+      {
+        path: "/test/file.ts",
+        startLine: 1,
+        endLine: 10,
+        score: 0.9,
+        snippet: "hello world",
+        source: "memory",
+      },
     ];
-    const output = applyMMR(results, { enabled: true });
-    expect(output).toHaveLength(3);
+
+    const reranked = applyMMRToHybridResults(results);
+    expect(reranked[0]).toEqual(results[0]);
+  });
+
+  it("creates unique IDs from path and startLine", () => {
+    const results: HybridResult[] = [
+      {
+        path: "/test/a.ts",
+        startLine: 1,
+        endLine: 10,
+        score: 0.9,
+        snippet: "same content here",
+        source: "memory",
+      },
+      {
+        path: "/test/a.ts",
+        startLine: 20,
+        endLine: 30,
+        score: 0.8,
+        snippet: "same content here",
+        source: "memory",
+      },
+    ];
+
+    // Should work without ID collision
+    const reranked = applyMMRToHybridResults(results);
+    expect(reranked).toHaveLength(2);
+  });
+
+  it("re-ranks results for diversity", () => {
+    const results: HybridResult[] = [
+      {
+        path: "/a.ts",
+        startLine: 1,
+        endLine: 10,
+        score: 1.0,
+        snippet: "function add numbers together",
+        source: "memory",
+      },
+      {
+        path: "/b.ts",
+        startLine: 1,
+        endLine: 10,
+        score: 0.95,
+        snippet: "function add values together",
+        source: "memory",
+      },
+      {
+        path: "/c.ts",
+        startLine: 1,
+        endLine: 10,
+        score: 0.9,
+        snippet: "database connection pool",
+        source: "memory",
+      },
+    ];
+
+    const reranked = applyMMRToHybridResults(results, { enabled: true, lambda: 0.5 });
+
+    // First stays the same (highest score)
+    expect(reranked[0].path).toBe("/a.ts");
+    // Second should be the diverse one
+    expect(reranked[1].path).toBe("/c.ts");
+  });
+
+  it("respects disabled config", () => {
+    const results: HybridResult[] = [
+      { path: "/a.ts", startLine: 1, endLine: 10, score: 0.9, snippet: "test", source: "memory" },
+      { path: "/b.ts", startLine: 1, endLine: 10, score: 0.8, snippet: "test", source: "memory" },
+    ];
+
+    const reranked = applyMMRToHybridResults(results, { enabled: false });
+    expect(reranked).toEqual(results);
+  });
+});
+
+describe("DEFAULT_MMR_CONFIG", () => {
+  it("has expected default values", () => {
+    expect(DEFAULT_MMR_CONFIG.enabled).toBe(false);
+    expect(DEFAULT_MMR_CONFIG.lambda).toBe(0.7);
   });
 });

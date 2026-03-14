@@ -1,27 +1,21 @@
-/**
- * Hybrid search merging vector and keyword results,
- * extracted from OpenClaw.
- */
-
-import { applyMMR, type MMRConfig, DEFAULT_MMR_CONFIG } from "./mmr.js";
+import { applyMMRToHybridResults, type MMRConfig, DEFAULT_MMR_CONFIG } from "./mmr.js";
 import {
-  applyTemporalDecay,
+  applyTemporalDecayToHybridResults,
   type TemporalDecayConfig,
   DEFAULT_TEMPORAL_DECAY_CONFIG,
 } from "./temporal-decay.js";
 
-export { type MMRConfig, DEFAULT_MMR_CONFIG } from "./mmr.js";
-export {
-  type TemporalDecayConfig,
-  DEFAULT_TEMPORAL_DECAY_CONFIG,
-} from "./temporal-decay.js";
+export type HybridSource = string;
+
+export { type MMRConfig, DEFAULT_MMR_CONFIG };
+export { type TemporalDecayConfig, DEFAULT_TEMPORAL_DECAY_CONFIG };
 
 export type HybridVectorResult = {
   id: string;
   path: string;
   startLine: number;
   endLine: number;
-  source: string;
+  source: HybridSource;
   snippet: string;
   vectorScore: number;
 };
@@ -31,21 +25,34 @@ export type HybridKeywordResult = {
   path: string;
   startLine: number;
   endLine: number;
-  source: string;
+  source: HybridSource;
   snippet: string;
   textScore: number;
 };
 
-type MergedEntry = {
-  id: string;
-  path: string;
-  startLine: number;
-  endLine: number;
-  source: string;
-  snippet: string;
-  vectorScore: number;
-  textScore: number;
-};
+export function buildFtsQuery(raw: string): string | null {
+  const tokens =
+    raw
+      .match(/[\p{L}\p{N}_]+/gu)
+      ?.map((t) => t.trim())
+      .filter(Boolean) ?? [];
+  if (tokens.length === 0) {
+    return null;
+  }
+  const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`);
+  return quoted.join(" AND ");
+}
+
+export function bm25RankToScore(rank: number): number {
+  if (!Number.isFinite(rank)) {
+    return 1 / (1 + 999);
+  }
+  if (rank < 0) {
+    const relevance = -rank;
+    return relevance / (1 + relevance);
+  }
+  return 1 / (1 + rank);
+}
 
 export async function mergeHybridResults(params: {
   vector: HybridVectorResult[];
@@ -53,8 +60,11 @@ export async function mergeHybridResults(params: {
   vectorWeight: number;
   textWeight: number;
   workspaceDir?: string;
+  /** MMR configuration for diversity-aware re-ranking */
   mmr?: Partial<MMRConfig>;
+  /** Temporal decay configuration for recency-aware scoring */
   temporalDecay?: Partial<TemporalDecayConfig>;
+  /** Test seam for deterministic time-dependent behavior */
   nowMs?: number;
 }): Promise<
   Array<{
@@ -63,80 +73,83 @@ export async function mergeHybridResults(params: {
     endLine: number;
     score: number;
     snippet: string;
-    source: string;
+    source: HybridSource;
   }>
 > {
-  const { vector, keyword, vectorWeight, textWeight } = params;
+  const byId = new Map<
+    string,
+    {
+      id: string;
+      path: string;
+      startLine: number;
+      endLine: number;
+      source: HybridSource;
+      snippet: string;
+      vectorScore: number;
+      textScore: number;
+    }
+  >();
 
-  // 1. Merge by id, dedup
-  const merged = new Map<string, MergedEntry>();
-
-  for (const v of vector) {
-    merged.set(v.id, {
-      id: v.id,
-      path: v.path,
-      startLine: v.startLine,
-      endLine: v.endLine,
-      source: v.source,
-      snippet: v.snippet,
-      vectorScore: v.vectorScore,
+  for (const r of params.vector) {
+    byId.set(r.id, {
+      id: r.id,
+      path: r.path,
+      startLine: r.startLine,
+      endLine: r.endLine,
+      source: r.source,
+      snippet: r.snippet,
+      vectorScore: r.vectorScore,
       textScore: 0,
     });
   }
 
-  for (const k of keyword) {
-    const existing = merged.get(k.id);
+  for (const r of params.keyword) {
+    const existing = byId.get(r.id);
     if (existing) {
-      existing.textScore = k.textScore;
-      // Keep the snippet from whichever had higher individual score
-      if (k.textScore > existing.vectorScore) {
-        existing.snippet = k.snippet;
+      existing.textScore = r.textScore;
+      if (r.snippet && r.snippet.length > 0) {
+        existing.snippet = r.snippet;
       }
     } else {
-      merged.set(k.id, {
-        id: k.id,
-        path: k.path,
-        startLine: k.startLine,
-        endLine: k.endLine,
-        source: k.source,
-        snippet: k.snippet,
+      byId.set(r.id, {
+        id: r.id,
+        path: r.path,
+        startLine: r.startLine,
+        endLine: r.endLine,
+        source: r.source,
+        snippet: r.snippet,
         vectorScore: 0,
-        textScore: k.textScore,
+        textScore: r.textScore,
       });
     }
   }
 
-  // 2. Calculate combined score
-  let results = Array.from(merged.values()).map((entry) => ({
-    path: entry.path,
-    startLine: entry.startLine,
-    endLine: entry.endLine,
-    score: vectorWeight * entry.vectorScore + textWeight * entry.textScore,
-    snippet: entry.snippet,
-    source: entry.source,
-  }));
+  const merged = Array.from(byId.values()).map((entry) => {
+    const score = params.vectorWeight * entry.vectorScore + params.textWeight * entry.textScore;
+    return {
+      path: entry.path,
+      startLine: entry.startLine,
+      endLine: entry.endLine,
+      score,
+      snippet: entry.snippet,
+      source: entry.source,
+    };
+  });
 
-  // 3. Apply temporal decay
-  const decayConfig: TemporalDecayConfig = {
-    ...DEFAULT_TEMPORAL_DECAY_CONFIG,
-    ...(params.temporalDecay ?? {}),
-  };
-  results = await applyTemporalDecay(
-    results,
-    decayConfig,
-    params.workspaceDir,
-    params.nowMs,
-  );
+  const temporalDecayConfig = { ...DEFAULT_TEMPORAL_DECAY_CONFIG, ...params.temporalDecay };
+  const decayed = await applyTemporalDecayToHybridResults({
+    results: merged,
+    temporalDecay: temporalDecayConfig,
+    workspaceDir: params.workspaceDir,
+    nowMs: params.nowMs,
+  });
+  const sorted = decayed.toSorted((a, b) => b.score - a.score);
 
-  // 4. Sort by score desc
-  results.sort((a, b) => b.score - a.score);
+  // Apply MMR re-ranking if enabled
+  const mmrConfig = { ...DEFAULT_MMR_CONFIG, ...params.mmr };
+  if (mmrConfig.enabled) {
+    return applyMMRToHybridResults(sorted, mmrConfig);
+  }
 
-  // 5. Apply MMR if enabled
-  const mmrConfig: Partial<MMRConfig> = {
-    ...DEFAULT_MMR_CONFIG,
-    ...(params.mmr ?? {}),
-  };
-  results = applyMMR(results, mmrConfig);
-
-  return results;
+  return sorted;
 }
