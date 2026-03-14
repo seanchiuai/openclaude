@@ -1,12 +1,4 @@
-// TODO: Import EmbeddingInput from embedding-inputs.ts once that module is ported.
-// For now, define the type locally to match OpenClaw's embedding-inputs.ts.
-type EmbeddingInput = {
-  text: string;
-  parts?: Array<
-    | { type: "text"; text: string }
-    | { type: "inline-data"; mimeType: string; data: string }
-  >;
-};
+import type { EmbeddingInput } from "./embedding-inputs.js";
 
 // Helpers for enforcing embedding model input size limits.
 //

@@ -15,6 +15,13 @@ export type MemoryChunk = {
   endLine: number;
   text: string;
   hash: string;
+  embeddingInput?: {
+    text: string;
+    parts?: Array<
+      | { type: "text"; text: string }
+      | { type: "inline-data"; mimeType: string; data: string }
+    >;
+  };
 };
 
 export type MemoryFileEntry = {
@@ -23,6 +30,11 @@ export type MemoryFileEntry = {
   mtimeMs: number;
   size: number;
   hash: string;
+  dataHash?: string;
+  kind?: "markdown" | "multimodal";
+  contentText?: string;
+  modality?: "image" | "audio";
+  mimeType?: string;
 };
 
 export type MemorySyncProgress = {
