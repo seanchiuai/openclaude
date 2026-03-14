@@ -17,6 +17,8 @@ export interface AgentTask {
   resumeSession?: boolean;
   /** Gateway Bearer token for authenticated MCP gateway calls */
   gatewayToken?: string;
+  /** Model override for this task (e.g. 'claude-sonnet-4-6') */
+  model?: string;
 }
 
 export type SessionStatus =

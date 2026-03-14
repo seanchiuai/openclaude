@@ -48,6 +48,11 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
     args.push("--system-prompt", task.systemPrompt);
   }
 
+  // Model override (e.g. for subagents using a cheaper model)
+  if (task.model) {
+    args.push("--model", task.model);
+  }
+
   // Build MCP config: merge user-configured servers with auto-injected gateway server.
   // The gateway server takes precedence on name collision.
   const gatewayMcpEnv: Record<string, string> = {};

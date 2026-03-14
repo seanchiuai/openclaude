@@ -16,6 +16,7 @@ export interface SubagentRun {
   childClaudeSessionId?: string;
   task: string;
   label?: string;
+  model?: string;
   status: "queued" | "running" | "completed" | "failed" | "timed_out" | "killed";
   createdAt: number;
   startedAt?: number;

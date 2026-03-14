@@ -170,6 +170,7 @@ if (!CHILD_MODE) {
     {
       task: z.string().describe("Task description for the child agent"),
       label: z.string().optional().describe("Short label for status display (e.g. 'research', 'summarize')"),
+      model: z.string().optional().describe("Model override (e.g. 'claude-sonnet-4-6' for cheaper tasks)"),
       timeoutSeconds: z.number().optional().describe("Timeout in seconds (default: 300, max: 3600)"),
     },
     (params) => callGateway("/api/subagent/spawn", {

@@ -80,6 +80,7 @@ const LogsTailBody = z.object({
 const SubagentSpawnBody = z.object({
   task: z.string().min(1),
   label: z.string().optional(),
+  model: z.string().optional(),
   timeoutSeconds: z.number().min(10).max(3600).optional(),
   callerSessionId: z.string().optional(),
 });
@@ -449,6 +450,7 @@ export function createGatewayApp(ctx: GatewayContext) {
       childSessionId,
       task: parsed.data.task,
       label: parsed.data.label,
+      model: parsed.data.model,
       timeoutSeconds: parsed.data.timeoutSeconds,
       status: "queued",
       createdAt: Date.now(),

@@ -18,6 +18,7 @@ import { killProcessGroup } from "../engine/spawn.js";
 import { MemoryIndexManager, closeAllMemoryIndexManagers } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
+import { requestHeartbeatNow } from "../cron/heartbeat-wake.js";
 import { createSubagentRegistry, type SubagentRegistry, type SubagentRun } from "../engine/subagent-registry.js";
 import { createAnnouncePipeline } from "../engine/subagent-announce.js";
 import { buildChildSystemPrompt } from "../engine/system-prompt.js";
@@ -123,6 +124,11 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
         }
       },
       deliverResult: deliverToChannel,
+      onJobComplete: (job, outcome) => {
+        if (outcome.status === "ok") {
+          requestHeartbeatNow({ reason: `cron:${job.name}` });
+        }
+      },
     });
     cronService.start();
     log.info("Cron service started");
@@ -140,6 +146,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
         ackMaxChars: config.heartbeat.ackMaxChars,
         target: config.heartbeat.target,
         activeHours: config.heartbeat.activeHours,
+        agents: config.heartbeat.agents,
       },
       {
         runIsolated: async (prompt) => {
@@ -210,6 +217,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       mcpConfig: config.mcp,
       gatewayUrl,
       gatewayToken,
+      model: run.model,
     }).then((result) => {
       subagentRegistry.endRun(run.runId, "completed", result.text);
       const updatedRun = subagentRegistry.get(run.runId)!;

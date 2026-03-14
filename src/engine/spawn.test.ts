@@ -283,6 +283,28 @@ describe("spawnClaude", () => {
     expect(args).not.toContain("--resume");
   });
 
+  it("passes --model flag when model is set", () => {
+    spawnClaude({
+      sessionId: "s1",
+      prompt: "test",
+      model: "claude-sonnet-4-6",
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain("--model");
+    expect(args).toContain("claude-sonnet-4-6");
+  });
+
+  it("does not pass --model when model is undefined", () => {
+    spawnClaude({
+      sessionId: "s1",
+      prompt: "test",
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--model");
+  });
+
   it("extracts token usage from result event", async () => {
     const { promise } = spawnClaude({ sessionId: "s1", prompt: "test" });
 
