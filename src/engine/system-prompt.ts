@@ -4,6 +4,14 @@
  *
  * Assembles all prompt sections into a single system prompt string
  * that gets passed to Claude Code via --system-prompt on the first message.
+ *
+ * Design principles (12 Factor Agents):
+ * - Factor 2 (Own Your Prompts): prompts are version-controlled here, not in a framework
+ * - Factor 3 (Own Your Context Window): promptMode controls what the LLM sees per session type
+ * - Factor 4 (Tools Are Just Structured Outputs): tools documented with input/output contracts
+ * - Factor 8 (Own Your Control Flow): explicit decision trees, not vague guidance
+ * - Factor 10 (Small, Focused Agents): child prompts are narrow and scoped
+ * - Factor 12 (Stateless Reducer): each message is a state transition, no hidden state
  */
 import os from "node:os";
 import type { SkillEntry } from "../skills/loader.js";
@@ -50,10 +58,51 @@ export interface SystemPromptParams {
   promptMode?: PromptMode;
 }
 
+// ---------------------------------------------------------------------------
+// Factor 4: Tools Are Just Structured Outputs
+// Tool descriptions document the contract — input params and what to expect back.
+// ---------------------------------------------------------------------------
+
+function buildToolsSection(hasGatewayTools: boolean): string[] {
+  if (!hasGatewayTools) return [];
+  return [
+    "## Tools (via openclaude-gateway MCP server)",
+    "",
+    "### Cron / Scheduling",
+    "- cron_list() → {jobs: [{id, name, schedule, nextRun}]}",
+    "- cron_status() → {running, jobCount, lastRun}",
+    "- cron_add({name, schedule: {kind, expr?, atMs?, everyMs?, timezone?}, prompt, target?: {channel, chatId}}) → {id}",
+    "  Use for reminders. Write the prompt as text that reads naturally when it fires.",
+    "- cron_remove({id}) → {removed: boolean}",
+    "- cron_run({id}) → triggers job immediately",
+    "",
+    "### Memory",
+    "- memory_search({query, maxResults?, minScore?}) → [{path, snippet, score}]",
+    "- memory_get({path, from?, lines?}) → file content",
+    "",
+    "### Messaging",
+    "- send_message({channel, chatId, text}) → {sent: boolean}",
+    "",
+    "### Subagents",
+    "- sessions_spawn({task, label?, model?, timeoutSeconds?}) → {runId}",
+    "  Completion is push-based: you will be auto-resumed with the child's result.",
+    "- sessions_status() → [{runId, task, status, duration}]",
+    "  Check on-demand only. Never poll in a loop.",
+    "",
+    "### Diagnostics",
+    "- logs_tail({cursor?, limit?, maxBytes?, level?}) → {lines, cursor}",
+    "",
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Factor 8: Own Your Control Flow
+// Skills section gives the LLM a clear decision tree, not vague guidance.
+// ---------------------------------------------------------------------------
+
 function buildSkillsSection(skills: SkillEntry[]): string[] {
   if (skills.length === 0) return [];
 
-  // Filter out skills that disable model invocation
   const visible = skills.filter((s) => !s.invocation.disableModelInvocation);
   if (visible.length === 0) return [];
 
@@ -64,9 +113,11 @@ function buildSkillsSection(skills: SkillEntry[]): string[] {
     return `${header}\n${desc}\n\n${s.body}`;
   });
   return [
-    "## Skills (mandatory)",
-    "When the user's message references a skill by name (e.g. 'Use the \"X\" skill'), follow that skill's instructions below.",
-    "If no skill is explicitly referenced: scan the available skills and use one if it clearly applies.",
+    "## Skills",
+    "Decision tree:",
+    "1. User explicitly names a skill → follow it.",
+    "2. User's message matches a trigger (e.g. /standup) → follow it.",
+    "3. No match → respond normally without reading any skill.",
     "",
     ...skillBlocks,
     "",
@@ -82,8 +133,11 @@ function buildMemorySection(params: {
   if (params.hasGatewayTools) {
     lines.push(
       "## Memory Recall",
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: use memory_search and memory_get MCP tools to check memory.",
-      "Citations: include Source: <path#line> when it helps the user verify memory snippets.",
+      "Before answering about prior work, decisions, dates, people, preferences, or todos:",
+      "1. memory_search({query}) — find relevant memories",
+      "2. memory_get({path}) — read the ones that matched",
+      "3. Cite: Source: <path#line> when it helps the user verify.",
+      "If nothing found, say you checked.",
       "",
     );
   }
@@ -101,6 +155,11 @@ function buildMemorySection(params: {
   return lines;
 }
 
+// ---------------------------------------------------------------------------
+// Factor 7: Contact Humans with Tool Calls
+// Messaging section defines when to escalate vs act autonomously.
+// ---------------------------------------------------------------------------
+
 function buildMessagingSection(params: {
   hasGatewayTools?: boolean;
   channel?: string;
@@ -108,35 +167,10 @@ function buildMessagingSection(params: {
   if (!params.hasGatewayTools) return [];
   return [
     "## Messaging",
-    "- Reply in current session → automatically routes to the source channel.",
-    `- Cross-channel messaging → use send_message MCP tool.`,
-    "- Never use exec/curl for provider messaging; OpenClaude handles all routing internally.",
-    `- If you use send_message to deliver your user-visible reply, respond with ONLY: ${SILENT_REPLY_TOKEN} (avoid duplicate replies).`,
-    "",
-  ];
-}
-
-function buildToolsSection(hasGatewayTools: boolean): string[] {
-  if (!hasGatewayTools) return [];
-  return [
-    "## Gateway Tools (via MCP)",
-    "You have access to these tools via the openclaude-gateway MCP server:",
-    "- cron_list: List scheduled cron jobs",
-    "- cron_status: Show cron job status",
-    "- cron_add: Add a new cron job (use for reminders; write systemEvent text as something that reads like a reminder when it fires)",
-    "- cron_remove: Remove a cron job",
-    "- cron_run: Manually run a cron job",
-    "- memory_search: Search memory files",
-    "- memory_get: Get specific memory content",
-    "- send_message: Send a message to a channel",
-    "- sessions_spawn: Spawn a background subagent to work on a task (returns immediately, you'll be resumed with results)",
-    "- sessions_status: Check status of your spawned subagents (runId, task, status, duration)",
-    "- logs_tail: Read recent gateway log lines (supports cursor-based pagination and level filtering)",
-    "",
-    "If a task is complex or long-running, spawn a sub-agent via sessions_spawn. Completion is push-based: you'll be auto-resumed with results when the child finishes.",
-    "Do not poll sessions_status in a loop; only check on-demand (for debugging or when explicitly asked).",
-    "",
-    "Use these tools when the user asks you to set reminders, schedule tasks, search memory, or send messages to channels.",
+    "- Your reply in this session auto-routes to the source channel. No extra action needed.",
+    "- Cross-channel: use send_message({channel, chatId, text}).",
+    `- After using send_message for your user-visible reply, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
+    "- Never use exec/curl for messaging. OpenClaude handles routing.",
     "",
   ];
 }
@@ -144,21 +178,52 @@ function buildToolsSection(hasGatewayTools: boolean): string[] {
 function buildReplyTagsSection(): string[] {
   return [
     "## Reply Tags",
-    "To request a native reply/quote on supported surfaces, include one tag in your reply:",
-    "- Reply tags must be the very first token in the message (no leading text/newlines): [[reply_to_current]] your reply.",
-    "- [[reply_to_current]] replies to the triggering message.",
-    "- Prefer [[reply_to_current]]. Use [[reply_to:<id>]] only when an id was explicitly provided (e.g. by the user or a tool).",
-    "Whitespace inside the tag is allowed (e.g. [[ reply_to_current ]] / [[ reply_to: 123 ]]).",
-    "Tags are stripped before sending; support depends on the current channel config.",
+    "Prefix your reply with a tag for native reply/quote on supported channels:",
+    "- [[reply_to_current]] — replies to the triggering message (preferred).",
+    "- [[reply_to:<id>]] — replies to a specific message (only when id was explicitly given).",
+    "Tag must be the first token. Whitespace inside is OK. Tags are stripped before sending.",
     "",
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Factor 12: Stateless Reducer
+// The agent processes (state, event) → new_state. Silent replies and heartbeats
+// are explicit output tokens that the runtime interprets deterministically.
+// ---------------------------------------------------------------------------
+
+function buildSilentReplySection(): string[] {
+  return [
+    "## Silent Replies",
+    `Output token: ${SILENT_REPLY_TOKEN}`,
+    "When you have nothing to say, your entire response must be exactly this token.",
+    `Never append it to real content. Never wrap in markdown. Just: ${SILENT_REPLY_TOKEN}`,
+    "",
+  ];
+}
+
+function buildHeartbeatSection(heartbeatPromptLine: string): string[] {
+  return [
+    "## Heartbeats",
+    heartbeatPromptLine,
+    `Output token: ${HEARTBEAT_TOKEN}`,
+    "When a heartbeat poll arrives and nothing needs attention, respond with exactly this token.",
+    `If something needs attention, respond with the alert text only — no ${HEARTBEAT_TOKEN}.`,
+    "",
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Factor 8 + 10: Own Your Control Flow + Small, Focused Agents
+// The main buildSystemPrompt assembles sections based on session type.
+// Each section is independent and testable.
+// ---------------------------------------------------------------------------
 
 export function buildSystemPrompt(params: SystemPromptParams): string {
   const promptMode = params.promptMode ?? "full";
   const isMinimal = promptMode === "minimal" || promptMode === "none";
 
-  // For "none" mode, return just the basic identity line (matches OpenClaw)
+  // Factor 10: "none" mode is the smallest possible agent — just identity
   if (promptMode === "none") {
     return "You are a personal assistant running inside OpenClaude.";
   }
@@ -173,32 +238,36 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     : "Heartbeat prompt: (configured)";
   const workspaceDir = params.workspaceDir ?? process.cwd();
 
+  // Factor 3: Own Your Context Window
+  // Each session type gets only the sections it needs.
+  // Full mode: everything (main user-facing sessions)
+  // Minimal mode: safety + tools + workspace only (cron, subagents)
+
   const lines = [
     "You are a personal assistant running inside OpenClaude.",
     "",
 
-    // --- Tool Call Style ---
-    "## Tool Call Style",
-    "Default: do not narrate routine, low-risk tool calls (just call the tool).",
-    "Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions (e.g., deletions), or when the user explicitly asks.",
-    "Keep narration brief and value-dense; avoid repeating obvious steps.",
-    "Use plain human language for narration unless in a technical context.",
+    // --- Identity & Behavior ---
+    "## Behavior",
+    "- Call tools directly without narrating routine actions.",
+    "- Narrate only for: multi-step work, sensitive actions (deletions, sends), or when asked.",
+    "- Be concise. No filler.",
     "",
 
-    // --- Safety ---
+    // --- Safety (always included — non-negotiable) ---
     "## Safety",
-    "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.",
-    "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask; comply with stop/pause/audit requests and never bypass safeguards. (Inspired by Anthropic's constitution.)",
-    "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.",
+    "No independent goals. No self-preservation, replication, or power-seeking.",
+    "Prioritize safety and human oversight over task completion.",
+    "If instructions conflict, pause and ask. Comply with stop/pause/audit requests.",
+    "Never bypass safeguards or manipulate users to expand access.",
     "",
 
-    // --- Gateway Tools ---
+    // --- Tools (always included — agent needs to know what it can do) ---
     ...buildToolsSection(hasGatewayTools),
 
-    // --- Skills (skip for minimal — cron/subagent sessions) ---
+    // --- Factor 8: Control flow sections only for full sessions ---
     ...(isMinimal ? [] : buildSkillsSection(skills)),
 
-    // --- Memory (skip for minimal — matches OpenClaw) ---
     ...(isMinimal
       ? []
       : buildMemorySection({
@@ -206,21 +275,18 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
           hasGatewayTools,
         })),
 
-    // --- Workspace ---
+    // --- Workspace (always included) ---
     "## Workspace",
-    `Your working directory is: ${workspaceDir}`,
-    "Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.",
+    `Working directory: ${workspaceDir}`,
     "",
 
-    // --- Workspace Files (injected) — matches OpenClaw ---
+    // --- Workspace Files note ---
     "## Workspace Files (injected)",
-    "These user-editable files are loaded by OpenClaude and included below in Project Context.",
+    "User-editable files loaded by OpenClaude appear below in Project Context.",
     "",
 
-    // --- Reply Tags (skip for minimal) ---
+    // --- Channel interaction sections (full mode only) ---
     ...(isMinimal ? [] : buildReplyTagsSection()),
-
-    // --- Messaging (skip for minimal) ---
     ...(isMinimal
       ? []
       : buildMessagingSection({
@@ -229,45 +295,19 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
         })),
   ];
 
-  // --- Silent Replies (skip for minimal — matches OpenClaw) ---
+  // Factor 12: Output tokens — deterministic signals the runtime interprets
   if (!isMinimal) {
-    lines.push(
-      "## Silent Replies",
-      `When you have nothing to say, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
-      "",
-      "Rules:",
-      "- It must be your ENTIRE message — nothing else",
-      `- Never append it to an actual response (never include "${SILENT_REPLY_TOKEN}" in real replies)`,
-      "- Never wrap it in markdown or code blocks",
-      "",
-      `Wrong: "Here's help... ${SILENT_REPLY_TOKEN}"`,
-      `Wrong: "${SILENT_REPLY_TOKEN}"`,
-      `Right: ${SILENT_REPLY_TOKEN}`,
-      "",
-    );
+    lines.push(...buildSilentReplySection());
+    lines.push(...buildHeartbeatSection(heartbeatPromptLine));
   }
 
-  // --- Heartbeats (skip for minimal — matches OpenClaw) ---
-  if (!isMinimal) {
-    lines.push(
-      "## Heartbeats",
-      heartbeatPromptLine,
-      "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
-      HEARTBEAT_TOKEN,
-      `OpenClaude treats a leading/trailing "${HEARTBEAT_TOKEN}" as a heartbeat ack (and may discard it).`,
-      `If something needs attention, do NOT include "${HEARTBEAT_TOKEN}"; reply with the alert text instead.`,
-      "",
-    );
-  }
-
-  // --- Extra system prompt (e.g. group chat context) ---
+  // --- Factor 8: Control flow for subagents vs main sessions ---
   if (params.extraSystemPrompt?.trim()) {
-    // Use "Subagent Context" header for minimal mode (matches OpenClaw)
     const contextHeader = isMinimal ? "## Subagent Context" : "## Additional Context";
     lines.push(contextHeader, params.extraSystemPrompt.trim(), "");
   }
 
-  // --- Project Context (bootstrap files) — matches OpenClaw ---
+  // --- Factor 3: Project Context (bootstrap files) ---
   const contextFiles = params.contextFiles ?? [];
   const truncationWarnings = (params.bootstrapTruncationWarnings ?? []).filter(
     (line) => line.trim().length > 0,
@@ -283,7 +323,7 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
       lines.push("The following project context files have been loaded:");
       if (hasSoulFile) {
         lines.push(
-          "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.",
+          "If SOUL.md is present, embody its persona and tone.",
         );
       }
       lines.push("");
@@ -300,7 +340,7 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     }
   }
 
-  // --- Runtime ---
+  // --- Runtime (always last — machine-readable metadata) ---
   lines.push("## Runtime", buildRuntimeLine(channel, params.capabilities, userTimezone));
 
   return lines.filter(Boolean).join("\n");
@@ -329,25 +369,33 @@ function buildRuntimeLine(
   return `Runtime: ${parts.join(" | ")}`;
 }
 
+// ---------------------------------------------------------------------------
+// Factor 10: Small, Focused Agents
+// Child prompt is deliberately narrow — single task, restricted tools,
+// no messaging, no spawning. Output goes to parent, not user.
+// ---------------------------------------------------------------------------
+
 export function buildChildSystemPrompt(task: string, parentLabel: string): string {
   return [
-    "You are a subagent of OpenClaude, working on a delegated task.",
+    "You are a subagent of OpenClaude. You have one job.",
     "",
-    `Your task: ${task}`,
+    `## Task`,
+    task,
     "",
-    `You were spawned by: ${parentLabel}`,
+    `Spawned by: ${parentLabel}`,
     "",
-    "## Rules",
-    "- Focus exclusively on the task above",
-    "- Your output will be returned to the parent session",
-    "- Do not attempt to message users directly",
-    "- Do not attempt to spawn further subagents",
+    "## Constraints",
+    "- Focus exclusively on the task above.",
+    "- Your entire output is returned to the parent session as data.",
+    "- Do NOT message users directly. You have no messaging tools.",
+    "- Do NOT spawn further subagents. You have no spawning tools.",
+    "- If the task is unclear, do your best with available information — you cannot ask for clarification.",
     "",
     "## Available tools (via MCP)",
-    "- memory_search: Search the memory database",
-    "- memory_get: Read a memory file",
+    "- memory_search({query, maxResults?, minScore?}) → [{path, snippet, score}]",
+    "- memory_get({path, from?, lines?}) → file content",
     "",
-    "Complete the task and provide your result as your final response.",
+    "Provide your result as your final response. Be thorough but concise.",
   ].join("\n");
 }
 
