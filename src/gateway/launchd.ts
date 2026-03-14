@@ -3,7 +3,7 @@
  * Extracted and simplified from OpenClaw's daemon/launchd.ts.
  */
 import { execSync } from "node:child_process";
-import { writeFileSync, existsSync, unlinkSync, readFileSync, mkdirSync, chmodSync } from "node:fs";
+import { writeFileSync, existsSync, unlinkSync, readFileSync, mkdirSync, chmodSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { paths } from "../config/paths.js";
@@ -55,10 +55,60 @@ export function buildPlist(nodePath: string, entryPath: string): string {
 </plist>`;
 }
 
+/** Labels from previous versions of this project. Empty for now — add entries when the label changes. */
+const LEGACY_LABELS: string[] = [];
+
+export interface LegacyLaunchAgent {
+  label: string;
+  plistPath: string;
+  loaded: boolean;
+  exists: boolean;
+}
+
+export function findLegacyLaunchAgents(): LegacyLaunchAgent[] {
+  const uid = process.getuid?.();
+  return LEGACY_LABELS.map((label) => {
+    const plistPath = join(PLIST_DIR, `${label}.plist`);
+    let loaded = false;
+    try {
+      execSync(`launchctl print gui/${uid}/${label}`, { stdio: "ignore" });
+      loaded = true;
+    } catch {
+      // Not loaded
+    }
+    return { label, plistPath, loaded, exists: existsSync(plistPath) };
+  }).filter((a) => a.loaded || a.exists);
+}
+
+export function uninstallLegacyLaunchAgents(): LegacyLaunchAgent[] {
+  const found = findLegacyLaunchAgents();
+  const uid = process.getuid?.();
+  const trashDir = join(homedir(), ".Trash");
+  for (const agent of found) {
+    if (agent.loaded) {
+      try {
+        execSync(`launchctl bootout gui/${uid}/${agent.label}`, { stdio: "ignore" });
+      } catch {
+        // Best-effort
+      }
+    }
+    if (agent.exists) {
+      try {
+        mkdirSync(trashDir, { recursive: true });
+        renameSync(agent.plistPath, join(trashDir, `${agent.label}.plist`));
+      } catch {
+        try { unlinkSync(agent.plistPath); } catch { /* ignore */ }
+      }
+    }
+  }
+  return found;
+}
+
 export function installLaunchAgent(
   nodePath: string,
   entryPath: string,
 ): void {
+  uninstallLegacyLaunchAgents();
   const plist = buildPlist(nodePath, entryPath);
   mkdirSync(PLIST_DIR, { recursive: true, mode: LAUNCH_AGENT_DIR_MODE });
   writeFileSync(PLIST_PATH, plist, "utf-8");

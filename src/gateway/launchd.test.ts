@@ -23,6 +23,7 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   chmodSync: vi.fn(),
+  renameSync: vi.fn(),
 }));
 
 vi.mock("../config/paths.js", () => ({
@@ -42,6 +43,8 @@ import {
   stopLaunchAgent,
   isLaunchAgentLoaded,
   readLaunchAgentPid,
+  findLegacyLaunchAgents,
+  uninstallLegacyLaunchAgents,
   LABEL,
   PLIST_PATH,
 } from "./launchd.js";
@@ -209,6 +212,18 @@ describe("readLaunchAgentPid", () => {
     });
 
     expect(readLaunchAgentPid()).toBeNull();
+  });
+});
+
+describe("findLegacyLaunchAgents", () => {
+  it("returns empty array when no legacy labels are defined", () => {
+    expect(findLegacyLaunchAgents()).toEqual([]);
+  });
+});
+
+describe("uninstallLegacyLaunchAgents", () => {
+  it("returns empty array when no legacy labels are defined", () => {
+    expect(uninstallLegacyLaunchAgents()).toEqual([]);
   });
 });
 
