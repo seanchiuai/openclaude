@@ -10,7 +10,7 @@ import { open, stat } from "node:fs/promises";
 import { paths } from "../config/paths.js";
 import type { ProcessPool } from "../engine/pool.js";
 import type { CronService } from "../cron/index.js";
-import type { MemoryManager } from "../memory/index.js";
+import type { MemorySearchManager } from "../memory/index.js";
 import type { ChannelAdapter } from "../channels/types.js";
 import type { SubagentRegistry, SubagentRun } from "../engine/subagent-registry.js";
 
@@ -93,7 +93,7 @@ export interface GatewayContext {
   startedAt: number;
   channels: string[];
   cronService?: CronService;
-  memoryManager?: MemoryManager;
+  memoryManager?: MemorySearchManager;
   channelAdapters?: Map<string, ChannelAdapter>;
   authMiddleware?: (c: import("hono").Context, next: import("hono").Next) => Promise<Response | void>;
   subagentRegistry?: SubagentRegistry;
@@ -312,7 +312,7 @@ export function createGatewayApp(ctx: GatewayContext) {
     const parsed = await parseBody(MemoryGetBody)(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     try {
-      const result = await ctx.memoryManager.readFile(parsed.data.path, parsed.data.from, parsed.data.lines);
+      const result = await ctx.memoryManager.readFile({ relPath: parsed.data.path, from: parsed.data.from, lines: parsed.data.lines });
       return c.json({ ok: true, ...result });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);

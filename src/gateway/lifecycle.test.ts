@@ -109,10 +109,13 @@ const mockMemoryManager = {
   status: vi.fn().mockReturnValue({ provider: "fts-only", files: 0, chunks: 0, dirty: true, dbPath: "", fts: { enabled: true, available: true }, vector: { enabled: false }, cache: { enabled: false, entries: 0 } }),
   close: vi.fn(),
 };
-const mockCreateMemoryManager = vi.fn().mockReturnValue(mockMemoryManager);
+const mockCloseAllMemoryIndexManagers = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../memory/index.js", () => ({
-  createMemoryManager: (...args: unknown[]) => mockCreateMemoryManager(...args),
+  MemoryIndexManager: {
+    get: vi.fn().mockResolvedValue(mockMemoryManager),
+  },
+  closeAllMemoryIndexManagers: (...args: unknown[]) => mockCloseAllMemoryIndexManagers(...args),
 }));
 
 const mockLoadSkills = vi.fn().mockResolvedValue([]);
@@ -167,6 +170,7 @@ function minimalConfig() {
     agent: { maxConcurrent: 4 },
     channels: {},
     heartbeat: { enabled: false, every: 1_800_000 },
+    memory: { enabled: true, dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
     cron: { enabled: false, storePath: "/tmp/test-cron/jobs.json" },
     gateway: { port: 45557, auth: { mode: "none" as const } },
   };
@@ -180,6 +184,7 @@ function telegramConfig() {
       telegram: { enabled: true, token: "fake-token" },
     },
     heartbeat: { enabled: false, every: 1_800_000 },
+    memory: { enabled: true, dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
     cron: { enabled: false, storePath: "/tmp/test-cron/jobs.json" },
     gateway: { port: 45557, auth: { mode: "none" as const } },
   };
@@ -200,8 +205,8 @@ beforeEach(() => {
   mockCreateTelegramChannel.mockReturnValue(mockTelegramChannel);
   mockTelegramChannel.start.mockResolvedValue(undefined);
   mockTelegramChannel.stop.mockResolvedValue(undefined);
-  mockCreateMemoryManager.mockReturnValue(mockMemoryManager);
   mockMemoryManager.sync.mockResolvedValue(undefined);
+  mockCloseAllMemoryIndexManagers.mockResolvedValue(undefined);
   mockCreateRouter.mockReturnValue(mockRouterFn);
   mockCreateCronService.mockReturnValue(mockCronService);
   mockCreateHeartbeatRunner.mockReturnValue(mockHeartbeatRunner);
@@ -277,7 +282,7 @@ describe("startGateway", () => {
     mockLoadConfig.mockReturnValue(telegramConfig());
 
     const callOrder: string[] = [];
-    mockMemoryManager.close.mockImplementation(() => {
+    mockCloseAllMemoryIndexManagers.mockImplementation(async () => {
       callOrder.push("memory.close");
     });
     mockTelegramChannel.stop.mockImplementation(async () => {
@@ -335,6 +340,7 @@ describe("shutdown", () => {
       agent: { maxConcurrent: 4 },
       channels: {},
       heartbeat: { enabled: true, every: 1_800_000, checklistPath: "/tmp/test-openclaude/HEARTBEAT.md" },
+      memory: { enabled: true, dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
       cron: { enabled: true, storePath: "/tmp/test-cron/jobs.json" },
       gateway: { port: 45557, auth: { mode: "none" as const } },
     };

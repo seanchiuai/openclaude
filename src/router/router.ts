@@ -303,7 +303,7 @@ export function createRouter(deps: RouterDeps): Router {
 
     // Pre-turn memory flush: save durable facts before context compaction loses them
     if (shouldFlushMemory(chatSession)) {
-      const syncFn = memoryManager ? () => memoryManager.sync() : async () => {};
+      const syncFn = memoryManager?.sync ? () => memoryManager.sync!() : async () => {};
       try {
         await flushSessionToMemory(
           `Session ${chatSession.sessionId} has used ${chatSession.totalInputTokens} input tokens. Compaction count: ${chatSession.compactionCount}.`,

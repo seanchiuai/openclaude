@@ -3,14 +3,14 @@
  * These commands are handled directly without spawning Claude.
  */
 import type { ProcessPool } from "../engine/pool.js";
-import type { MemoryManager } from "../memory/index.js";
+import type { MemorySearchManager } from "../memory/index.js";
 import type { CronService } from "../cron/index.js";
 import type { SubagentRegistry } from "../engine/subagent-registry.js";
 import type { ParsedCommand } from "./types.js";
 
 export interface CommandDeps {
   pool: ProcessPool;
-  memoryManager?: MemoryManager;
+  memoryManager?: MemorySearchManager;
   cronService?: CronService;
   subagentRegistry?: SubagentRegistry;
 }
@@ -123,7 +123,7 @@ export function createCommandHandlers(deps: CommandDeps) {
         return "Memory system is not available.";
       }
 
-      await memoryManager.sync({ force: true });
+      await memoryManager.sync?.({ force: true });
       return "Memory sync complete.";
     },
 

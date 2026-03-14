@@ -15,7 +15,7 @@ import { loadSkills } from "../skills/index.js";
 import { sweepStaleSessions } from "../engine/session-cleanup.js";
 import { cleanStaleGatewayProcessesSync } from "../engine/orphan-reaper.js";
 import { killProcessGroup } from "../engine/spawn.js";
-import { createMemoryManager } from "../memory/index.js";
+import { MemoryIndexManager, closeAllMemoryIndexManagers } from "../memory/index.js";
 import { createCronService } from "../cron/index.js";
 import { createHeartbeatRunner } from "../cron/heartbeat.js";
 import { createSubagentRegistry, type SubagentRegistry, type SubagentRun } from "../engine/subagent-registry.js";
@@ -25,7 +25,7 @@ import { join } from "node:path";
 import type { OpenClaudeConfig } from "../config/types.js";
 import type { ProcessPool } from "../engine/pool.js";
 import type { ChannelAdapter } from "../channels/types.js";
-import type { MemoryManager } from "../memory/index.js";
+import type { MemorySearchManager } from "../memory/index.js";
 import type { CronService } from "../cron/index.js";
 import type { HeartbeatRunner } from "../cron/heartbeat.js";
 import type { CronDeliveryTarget } from "../cron/types.js";
@@ -34,7 +34,7 @@ export interface Gateway {
   config: OpenClaudeConfig;
   pool: ProcessPool;
   channels: Map<string, ChannelAdapter>;
-  memoryManager?: MemoryManager;
+  memoryManager?: MemorySearchManager;
   cronService?: CronService;
   subagentRegistry?: SubagentRegistry;
   shutdown: () => Promise<void>;
@@ -51,15 +51,19 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   const channelNames: string[] = [];
 
   // Create memory manager
-  const memoryManager = createMemoryManager({
-    dbPath: paths.memoryDb,
-    workspaceDir: paths.base,
-  });
+  const memoryManager = config.memory.enabled
+    ? await MemoryIndexManager.get({
+        memoryConfig: config.memory,
+        workspaceDir: paths.base,
+      })
+    : null;
 
   // Fire-and-forget initial memory sync
-  memoryManager.sync().catch((err: unknown) => {
-    log.warn("Initial memory sync failed", { error: err instanceof Error ? err.message : String(err) });
-  });
+  if (memoryManager?.sync) {
+    memoryManager.sync({ reason: "startup" }).catch((err: unknown) => {
+      log.warn("Initial memory sync failed", { error: err instanceof Error ? err.message : String(err) });
+    });
+  }
 
   // Subagent registry
   const subagentRegistry = createSubagentRegistry(join(paths.base, "subagent-runs.json"));
@@ -165,7 +169,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   }
 
   // Router returns response text — the channel bot sends it back directly
-  const rawRouter = createRouter({ pool, memoryManager, cronService, subagentRegistry, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
+  const rawRouter = createRouter({ pool, memoryManager: memoryManager ?? undefined, cronService, subagentRegistry, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
   const router: typeof rawRouter = (msg, onEvent) => {
     markActivity();
     return rawRouter(msg, onEvent);
@@ -229,7 +233,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     startedAt: appStartedAt,
     channels: channelNames,
     cronService,
-    memoryManager,
+    memoryManager: memoryManager ?? undefined,
     channelAdapters: channels,
     authMiddleware: authResult.middleware,
     subagentRegistry,
@@ -300,8 +304,8 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       log.info("Cron service stopped");
     }
 
-    // Close memory DB
-    memoryManager.close();
+    // Close all memory managers
+    await closeAllMemoryIndexManagers();
     log.info("Memory closed");
 
     // Stop channels
@@ -349,7 +353,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   process.on("uncaughtException", onCrash);
   process.on("unhandledRejection", onCrash);
 
-  return { config, pool, channels, memoryManager, cronService, subagentRegistry, shutdown };
+  return { config, pool, channels, memoryManager: memoryManager ?? undefined, cronService, subagentRegistry, shutdown };
 }
 
 function writePidFile(): void {

@@ -12,7 +12,7 @@
  * - router/index.js          → createRouter
  * - gateway/http.js          → createGatewayApp, startHttpServer
  * - channels/telegram/index.js → createTelegramChannel
- * - memory/index.js          → createMemoryManager
+ * - memory/index.js          → MemoryIndexManager, closeAllMemoryIndexManagers
  * - cron/index.js             → createCronService
  * - cron/heartbeat.js         → createHeartbeatRunner
  * - node:fs                  → writeFileSync, unlinkSync, existsSync, readFileSync
@@ -123,11 +123,14 @@ const mockMemoryManager = {
   }),
   search: vi.fn().mockResolvedValue([]),
 };
-const mockCreateMemoryManager = vi.fn().mockReturnValue(mockMemoryManager);
+const mockCloseAllMemoryIndexManagers = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../memory/index.js", () => ({
-  createMemoryManager: (...args: unknown[]) =>
-    mockCreateMemoryManager(...args),
+  MemoryIndexManager: {
+    get: vi.fn().mockResolvedValue(mockMemoryManager),
+  },
+  closeAllMemoryIndexManagers: (...args: unknown[]) =>
+    mockCloseAllMemoryIndexManagers(...args),
 }));
 
 const mockCronService = {
@@ -170,7 +173,7 @@ function minimalConfig() {
     channels: {},
     heartbeat: { enabled: false, every: 1_800_000 },
     mcp: {},
-    memory: { dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
+    memory: { enabled: true, dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
     cron: { enabled: false, storePath: "/tmp/test-openclaude/cron/jobs.json" },
     gateway: { port: 45557, auth: { mode: "none" as const } },
   };
@@ -184,7 +187,7 @@ function telegramConfig() {
     },
     heartbeat: { enabled: false, every: 1_800_000 },
     mcp: {},
-    memory: { dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
+    memory: { enabled: true, dbPath: "/tmp/test-openclaude/memory/openclaude.sqlite" },
     cron: { enabled: false, storePath: "/tmp/test-openclaude/cron/jobs.json" },
     gateway: { port: 45557, auth: { mode: "none" as const } },
   };
@@ -205,9 +208,9 @@ beforeEach(() => {
   mockTelegramChannel.start.mockResolvedValue(undefined);
   mockTelegramChannel.stop.mockResolvedValue(undefined);
   mockExistsSync.mockReturnValue(false);
-  mockCreateMemoryManager.mockReturnValue(mockMemoryManager);
   mockMemoryManager.sync.mockResolvedValue(undefined);
-  mockMemoryManager.close.mockReturnValue(undefined);
+  mockMemoryManager.close.mockResolvedValue(undefined);
+  mockCloseAllMemoryIndexManagers.mockResolvedValue(undefined);
   mockCreateCronService.mockReturnValue(mockCronService);
   mockCreateHeartbeatRunner.mockReturnValue(mockHeartbeatRunner);
   mockCreateRouter.mockReturnValue(mockRouterFn);
@@ -274,7 +277,7 @@ describe("shutdown sequence", () => {
     mockLoadConfig.mockReturnValue(telegramConfig());
 
     const callOrder: string[] = [];
-    mockMemoryManager.close.mockImplementation(() => {
+    mockCloseAllMemoryIndexManagers.mockImplementation(async () => {
       callOrder.push("memory.close");
     });
     mockTelegramChannel.stop.mockImplementation(async () => {
