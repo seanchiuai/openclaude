@@ -83,3 +83,10 @@ export type StreamEvent =
   | { type: "usage"; inputTokens: number; outputTokens: number; costUsd: number };
 
 export type OnStreamEvent = (event: StreamEvent) => void;
+
+export interface SpawnOptions {
+  /** Override the claude binary path (default: "claude"). For testing with fake-claude. */
+  claudeBinary?: string;
+  /** Extra env vars merged into subprocess environment */
+  env?: Record<string, string>;
+}

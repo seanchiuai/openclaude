@@ -11,6 +11,7 @@ import type {
   ClaudeSession,
   OnStreamEvent,
   PoolStats,
+  SpawnOptions,
 } from "./types.js";
 
 interface QueuedTask {
@@ -18,6 +19,7 @@ interface QueuedTask {
   resolve: (result: ClaudeResult) => void;
   reject: (error: Error) => void;
   onEvent?: OnStreamEvent;
+  spawnOptions?: SpawnOptions;
 }
 
 export function createProcessPool(maxConcurrent = 4) {
@@ -43,10 +45,10 @@ export function createProcessPool(maxConcurrent = 4) {
   }
 
   function executeTask(queued: QueuedTask): void {
-    const { task, resolve, reject, onEvent } = queued;
+    const { task, resolve, reject, onEvent, spawnOptions } = queued;
 
     try {
-      const { session, promise } = spawnClaude(task, onEvent);
+      const { session, promise } = spawnClaude(task, onEvent, spawnOptions);
       running.set(session.id, session);
 
       let resolveCompletion: () => void;
@@ -74,13 +76,13 @@ export function createProcessPool(maxConcurrent = 4) {
     }
   }
 
-  function submit(task: AgentTask, onEvent?: OnStreamEvent): Promise<ClaudeResult> {
+  function submit(task: AgentTask, onEvent?: OnStreamEvent, spawnOptions?: SpawnOptions): Promise<ClaudeResult> {
     if (draining) {
       return Promise.reject(new Error("Pool is draining, cannot accept tasks"));
     }
 
     return new Promise<ClaudeResult>((resolve, reject) => {
-      const queued: QueuedTask = { task, resolve, reject, onEvent };
+      const queued: QueuedTask = { task, resolve, reject, onEvent, spawnOptions };
 
       if (running.size < maxConcurrent) {
         executeTask(queued);

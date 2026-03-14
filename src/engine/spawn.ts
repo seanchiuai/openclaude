@@ -10,13 +10,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paths } from "../config/paths.js";
-import type { AgentTask, ClaudeResult, ClaudeSession, OnStreamEvent, TokenUsage } from "./types.js";
+import type { AgentTask, ClaudeResult, ClaudeSession, OnStreamEvent, SpawnOptions, TokenUsage } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes
 
-export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
+export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent, options?: SpawnOptions): {
   session: ClaudeSession;
   promise: Promise<ClaudeResult>;
 } {
@@ -86,13 +86,20 @@ export function spawnClaude(task: AgentTask, onEvent?: OnStreamEvent): {
   delete env.CLAUDE_API_KEY; // Same
   delete env.CLAUDE_CODE_ENTRYPOINT; // Don't inherit parent entrypoint
 
+  if (options?.env) Object.assign(env, options.env);
+
   const startedAt = Date.now();
-  const proc = spawn("claude", args, {
+  const binary = options?.claudeBinary ?? "claude";
+  const useShell = binary.includes(" ");
+  const spawnCmd = useShell ? `${binary} ${args.join(" ")}` : binary;
+  const spawnArgs = useShell ? [] : args;
+  const proc = spawn(spawnCmd, spawnArgs, {
     cwd: task.workingDirectory ?? projectPath,
     env,
     stdio: ["pipe", "pipe", "pipe"],
     signal: controller.signal,
-    detached: true, // Process group for clean kill
+    detached: !useShell, // Don't detach when using shell (process group semantics differ)
+    shell: useShell,
   });
 
   // Write prompt via stdin (claude -p reads from stdin)
