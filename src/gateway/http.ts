@@ -12,6 +12,7 @@ import type { ProcessPool } from "../engine/pool.js";
 import type { CronService } from "../cron/index.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { ChannelAdapter } from "../channels/types.js";
+import type { SubagentRegistry, SubagentRun } from "../engine/subagent-registry.js";
 
 /** Safely parse JSON body, returning a Zod-validated result or a 400 error response. */
 function parseBody<T>(schema: z.ZodType<T>) {
@@ -76,6 +77,17 @@ const LogsTailBody = z.object({
   level: z.enum(["error", "warn", "info", "debug"]).optional(),
 });
 
+const SubagentSpawnBody = z.object({
+  task: z.string().min(1),
+  label: z.string().optional(),
+  timeoutSeconds: z.number().min(10).max(3600).optional(),
+  callerSessionId: z.string().optional(),
+});
+
+const SubagentStatusBody = z.object({
+  callerSessionId: z.string().optional(),
+});
+
 export interface GatewayContext {
   pool: ProcessPool;
   startedAt: number;
@@ -84,6 +96,8 @@ export interface GatewayContext {
   memoryManager?: MemoryManager;
   channelAdapters?: Map<string, ChannelAdapter>;
   authMiddleware?: (c: import("hono").Context, next: import("hono").Next) => Promise<Response | void>;
+  subagentRegistry?: SubagentRegistry;
+  onSubagentSpawn?: (run: SubagentRun) => void;
 }
 
 const DEFAULT_LOG_LIMIT = 500;
@@ -404,6 +418,64 @@ export function createGatewayApp(ctx: GatewayContext) {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
+  });
+
+  // --- Subagent API ---
+  const MAX_CHILDREN_PER_PARENT = 4;
+
+  app.post("/api/subagent/spawn", async (c) => {
+    if (!ctx.subagentRegistry) return c.json({ error: "Subagent system not available" }, 503);
+    const parsed = await parseBody(SubagentSpawnBody)(c);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const callerSessionId = parsed.data.callerSessionId ?? "";
+
+    // Reject spawns from child sessions (API-level enforcement)
+    if (callerSessionId.startsWith("sub-")) {
+      return c.json({ error: "Child sessions cannot spawn subagents" }, 403);
+    }
+
+    // Check max children
+    const active = ctx.subagentRegistry.getActiveRunsForParent(callerSessionId);
+    if (active.length >= MAX_CHILDREN_PER_PARENT) {
+      return c.json({ error: `Max ${MAX_CHILDREN_PER_PARENT} concurrent children per parent` }, 429);
+    }
+
+    const runId = crypto.randomUUID();
+    const childSessionId = `sub-${crypto.randomUUID().slice(0, 8)}`;
+    const run: SubagentRun = {
+      runId,
+      parentSessionKey: "",
+      parentSessionId: callerSessionId,
+      childSessionId,
+      task: parsed.data.task,
+      label: parsed.data.label,
+      status: "queued",
+      createdAt: Date.now(),
+    };
+    ctx.subagentRegistry.register(run);
+
+    // Signal the gateway to actually spawn the child
+    ctx.onSubagentSpawn?.(run);
+
+    return c.json({ ok: true, runId, childSessionId, status: "accepted" });
+  });
+
+  app.post("/api/subagent/status", async (c) => {
+    if (!ctx.subagentRegistry) return c.json({ error: "Subagent system not available" }, 503);
+    const parsed = await parseBody(SubagentStatusBody)(c);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const callerSessionId = parsed.data.callerSessionId ?? "";
+    const runs = ctx.subagentRegistry.getRunsForParent(callerSessionId).map((r) => ({
+      runId: r.runId,
+      childSessionId: r.childSessionId,
+      task: r.label ?? r.task,
+      status: r.status,
+      duration: r.duration,
+      createdAt: r.createdAt,
+    }));
+    return c.json({ ok: true, runs });
   });
 
   return app;
