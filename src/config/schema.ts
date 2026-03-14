@@ -51,7 +51,70 @@ export const McpServerSchema = z.object({
 });
 
 export const MemorySchema = z.object({
+  enabled: z.boolean().default(true),
   dbPath: z.string().default("~/.openclaude/memory/openclaude.sqlite"),
+  sources: z.array(z.enum(["memory", "sessions"])).default(["memory"]),
+  extraPaths: z.array(z.string()).default([]),
+  provider: z.enum(["openai", "gemini", "voyage", "mistral", "ollama", "auto", "none"]).default("none"),
+  model: z.string().optional(),
+  outputDimensionality: z.number().optional(),
+  remote: z.object({
+    baseUrl: z.string().optional(),
+    apiKey: z.string().optional(),
+    headers: z.record(z.string()).optional(),
+    batch: z.object({
+      enabled: z.boolean().default(true),
+      wait: z.boolean().default(true),
+      concurrency: z.number().default(2),
+      pollIntervalMs: z.number().default(5000),
+      timeoutMinutes: z.number().default(60),
+    }).default({}),
+  }).default({}),
+  fallback: z.enum(["openai", "gemini", "voyage", "mistral", "ollama", "none"]).default("none"),
+  store: z.object({
+    driver: z.literal("sqlite").default("sqlite"),
+    path: z.string().optional(),
+    vector: z.object({
+      enabled: z.boolean().default(true),
+      extensionPath: z.string().optional(),
+    }).default({}),
+  }).default({}),
+  chunking: z.object({
+    tokens: z.number().default(400),
+    overlap: z.number().default(80),
+  }).default({}),
+  sync: z.object({
+    onSessionStart: z.boolean().default(true),
+    onSearch: z.boolean().default(true),
+    watch: z.boolean().default(false),
+    watchDebounceMs: z.number().default(500),
+    intervalMinutes: z.number().default(5),
+  }).default({}),
+  query: z.object({
+    maxResults: z.number().default(6),
+    minScore: z.number().default(0.35),
+    hybrid: z.object({
+      enabled: z.boolean().default(true),
+      vectorWeight: z.number().default(0.7),
+      textWeight: z.number().default(0.3),
+      candidateMultiplier: z.number().default(4),
+      mmr: z.object({
+        enabled: z.boolean().default(false),
+        lambda: z.number().default(0.7),
+      }).default({}),
+      temporalDecay: z.object({
+        enabled: z.boolean().default(false),
+        halfLifeDays: z.number().default(30),
+      }).default({}),
+    }).default({}),
+  }).default({}),
+  cache: z.object({
+    enabled: z.boolean().default(true),
+    maxEntries: z.number().optional(),
+  }).default({}),
+  multimodal: z.object({
+    enabled: z.boolean().default(false),
+  }).default({}),
 });
 
 export const CronSchema = z.object({

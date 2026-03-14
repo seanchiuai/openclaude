@@ -48,7 +48,70 @@ export interface McpServerConfig {
 }
 
 export interface MemoryConfig {
+  enabled: boolean;
   dbPath: string;
+  sources: ("memory" | "sessions")[];
+  extraPaths: string[];
+  provider: "openai" | "gemini" | "voyage" | "mistral" | "ollama" | "auto" | "none";
+  model?: string;
+  outputDimensionality?: number;
+  remote: {
+    baseUrl?: string;
+    apiKey?: string;
+    headers?: Record<string, string>;
+    batch: {
+      enabled: boolean;
+      wait: boolean;
+      concurrency: number;
+      pollIntervalMs: number;
+      timeoutMinutes: number;
+    };
+  };
+  fallback: "openai" | "gemini" | "voyage" | "mistral" | "ollama" | "none";
+  store: {
+    driver: "sqlite";
+    path?: string;
+    vector: {
+      enabled: boolean;
+      extensionPath?: string;
+    };
+  };
+  chunking: {
+    tokens: number;
+    overlap: number;
+  };
+  sync: {
+    onSessionStart: boolean;
+    onSearch: boolean;
+    watch: boolean;
+    watchDebounceMs: number;
+    intervalMinutes: number;
+  };
+  query: {
+    maxResults: number;
+    minScore: number;
+    hybrid: {
+      enabled: boolean;
+      vectorWeight: number;
+      textWeight: number;
+      candidateMultiplier: number;
+      mmr: {
+        enabled: boolean;
+        lambda: number;
+      };
+      temporalDecay: {
+        enabled: boolean;
+        halfLifeDays: number;
+      };
+    };
+  };
+  cache: {
+    enabled: boolean;
+    maxEntries?: number;
+  };
+  multimodal: {
+    enabled: boolean;
+  };
 }
 
 export interface CronConfig {
