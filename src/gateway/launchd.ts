@@ -7,6 +7,10 @@ import { writeFileSync, existsSync, unlinkSync, readFileSync, mkdirSync, chmodSy
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { paths } from "../config/paths.js";
+import {
+  isCurrentProcessLaunchdServiceLabel,
+  scheduleDetachedLaunchdRestartHandoff,
+} from "./launchd-restart-handoff.js";
 
 const LABEL = "ai.openclaude.gateway";
 const PLIST_DIR = join(homedir(), "Library", "LaunchAgents");
@@ -164,6 +168,22 @@ export function readLaunchAgentPid(): number | null {
   } catch {
     return null;
   }
+}
+
+export function restartLaunchAgent(): void {
+  if (isCurrentProcessLaunchdServiceLabel(LABEL)) {
+    const result = scheduleDetachedLaunchdRestartHandoff({
+      mode: "kickstart",
+      waitForPid: process.pid,
+      label: LABEL,
+      plistPath: PLIST_PATH,
+    });
+    if (!result.ok) throw new Error(`Restart handoff failed: ${result.detail}`);
+    return;
+  }
+  // External restart: direct kickstart
+  const uid = process.getuid?.();
+  execSync(`launchctl kickstart -k gui/${uid}/${LABEL}`, { stdio: "ignore" });
 }
 
 export { LABEL, PLIST_PATH };

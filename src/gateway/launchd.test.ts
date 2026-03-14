@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("node:child_process", () => ({
   execSync: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 vi.mock("node:fs", () => ({
@@ -45,6 +46,7 @@ import {
   readLaunchAgentPid,
   findLegacyLaunchAgents,
   uninstallLegacyLaunchAgents,
+  restartLaunchAgent,
   LABEL,
   PLIST_PATH,
 } from "./launchd.js";
@@ -224,6 +226,20 @@ describe("findLegacyLaunchAgents", () => {
 describe("uninstallLegacyLaunchAgents", () => {
   it("returns empty array when no legacy labels are defined", () => {
     expect(uninstallLegacyLaunchAgents()).toEqual([]);
+  });
+});
+
+describe("restartLaunchAgent", () => {
+  it("calls launchctl kickstart when not running under launchd", () => {
+    mockExecSync.mockReset();
+    const uid = process.getuid?.();
+
+    restartLaunchAgent();
+
+    expect(mockExecSync).toHaveBeenCalledWith(
+      `launchctl kickstart -k gui/${uid}/${LABEL}`,
+      { stdio: "ignore" },
+    );
   });
 });
 
