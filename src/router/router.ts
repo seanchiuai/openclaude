@@ -141,6 +141,9 @@ export function createRouter(deps: RouterDeps): Router {
       workspaceDir: process.cwd(),
       contextFiles,
       bootstrapTruncationWarnings: truncationWarnings,
+      // Cron/subagent sessions use minimal mode: skip Skills, Memory Recall,
+      // Reply Tags, Messaging, Silent Replies, Heartbeats (matches OpenClaw)
+      promptMode: params.minimal ? "minimal" : "full",
     });
   }
 

@@ -13,6 +13,16 @@ import { DEFAULT_SOUL_FILENAME } from "./workspace.js";
 const SILENT_REPLY_TOKEN = "NO_REPLY";
 const HEARTBEAT_TOKEN = "HEARTBEAT_OK";
 
+/**
+ * Controls which hardcoded sections are included in the system prompt.
+ * Matches OpenClaw's PromptMode type.
+ * - "full": All sections (default, for main agent)
+ * - "minimal": Reduced sections (no Skills, Memory Recall, Reply Tags, Messaging,
+ *              Silent Replies, Heartbeats) — used for cron/subagent sessions
+ * - "none": Just basic identity line, no sections
+ */
+export type PromptMode = "full" | "minimal" | "none";
+
 export interface SystemPromptParams {
   /** Skills loaded from ~/.openclaude/skills/ */
   skills?: SkillEntry[];
@@ -36,6 +46,8 @@ export interface SystemPromptParams {
   contextFiles?: EmbeddedContextFile[];
   /** Truncation warnings from bootstrap file loading */
   bootstrapTruncationWarnings?: string[];
+  /** Controls which sections to include. Defaults to "full". */
+  promptMode?: PromptMode;
 }
 
 function buildSkillsSection(skills: SkillEntry[]): string[] {
@@ -118,7 +130,12 @@ function buildToolsSection(hasGatewayTools: boolean): string[] {
     "- memory_get: Get specific memory content",
     "- send_message: Send a message to a channel",
     "- sessions_spawn: Spawn a background subagent to work on a task (returns immediately, you'll be resumed with results)",
-    "- sessions_status: Check status of your spawned subagents",
+    "- sessions_status: Check status of your spawned subagents (runId, task, status, duration)",
+    "- logs_tail: Read recent gateway log lines (supports cursor-based pagination and level filtering)",
+    "",
+    "If a task is complex or long-running, spawn a sub-agent via sessions_spawn. Completion is push-based: you'll be auto-resumed with results when the child finishes.",
+    "Do not poll sessions_status in a loop; only check on-demand (for debugging or when explicitly asked).",
+    "",
     "Use these tools when the user asks you to set reminders, schedule tasks, search memory, or send messages to channels.",
     "",
   ];
@@ -138,6 +155,14 @@ function buildReplyTagsSection(): string[] {
 }
 
 export function buildSystemPrompt(params: SystemPromptParams): string {
+  const promptMode = params.promptMode ?? "full";
+  const isMinimal = promptMode === "minimal" || promptMode === "none";
+
+  // For "none" mode, return just the basic identity line (matches OpenClaw)
+  if (promptMode === "none") {
+    return "You are a personal assistant running inside OpenClaude.";
+  }
+
   const skills = params.skills ?? [];
   const hasGatewayTools = params.hasGatewayTools ?? false;
   const channel = params.channel?.trim().toLowerCase();
@@ -170,14 +195,16 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     // --- Gateway Tools ---
     ...buildToolsSection(hasGatewayTools),
 
-    // --- Skills ---
-    ...buildSkillsSection(skills),
+    // --- Skills (skip for minimal — cron/subagent sessions) ---
+    ...(isMinimal ? [] : buildSkillsSection(skills)),
 
-    // --- Memory ---
-    ...buildMemorySection({
-      memoryContext: params.memoryContext,
-      hasGatewayTools,
-    }),
+    // --- Memory (skip for minimal — matches OpenClaw) ---
+    ...(isMinimal
+      ? []
+      : buildMemorySection({
+          memoryContext: params.memoryContext,
+          hasGatewayTools,
+        })),
 
     // --- Workspace ---
     "## Workspace",
@@ -190,42 +217,54 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     "These user-editable files are loaded by OpenClaude and included below in Project Context.",
     "",
 
-    // --- Reply Tags ---
-    ...buildReplyTagsSection(),
+    // --- Reply Tags (skip for minimal) ---
+    ...(isMinimal ? [] : buildReplyTagsSection()),
 
-    // --- Messaging ---
-    ...buildMessagingSection({
-      hasGatewayTools,
-      channel,
-    }),
-
-    // --- Silent Replies ---
-    "## Silent Replies",
-    `When you have nothing to say, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
-    "",
-    "Rules:",
-    "- It must be your ENTIRE message — nothing else",
-    `- Never append it to an actual response (never include "${SILENT_REPLY_TOKEN}" in real replies)`,
-    "- Never wrap it in markdown or code blocks",
-    "",
-    `Wrong: "Here's help... ${SILENT_REPLY_TOKEN}"`,
-    `Wrong: "${SILENT_REPLY_TOKEN}"`,
-    `Right: ${SILENT_REPLY_TOKEN}`,
-    "",
-
-    // --- Heartbeats ---
-    "## Heartbeats",
-    heartbeatPromptLine,
-    "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
-    HEARTBEAT_TOKEN,
-    `OpenClaude treats a leading/trailing "${HEARTBEAT_TOKEN}" as a heartbeat ack (and may discard it).`,
-    `If something needs attention, do NOT include "${HEARTBEAT_TOKEN}"; reply with the alert text instead.`,
-    "",
+    // --- Messaging (skip for minimal) ---
+    ...(isMinimal
+      ? []
+      : buildMessagingSection({
+          hasGatewayTools,
+          channel,
+        })),
   ];
+
+  // --- Silent Replies (skip for minimal — matches OpenClaw) ---
+  if (!isMinimal) {
+    lines.push(
+      "## Silent Replies",
+      `When you have nothing to say, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
+      "",
+      "Rules:",
+      "- It must be your ENTIRE message — nothing else",
+      `- Never append it to an actual response (never include "${SILENT_REPLY_TOKEN}" in real replies)`,
+      "- Never wrap it in markdown or code blocks",
+      "",
+      `Wrong: "Here's help... ${SILENT_REPLY_TOKEN}"`,
+      `Wrong: "${SILENT_REPLY_TOKEN}"`,
+      `Right: ${SILENT_REPLY_TOKEN}`,
+      "",
+    );
+  }
+
+  // --- Heartbeats (skip for minimal — matches OpenClaw) ---
+  if (!isMinimal) {
+    lines.push(
+      "## Heartbeats",
+      heartbeatPromptLine,
+      "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
+      HEARTBEAT_TOKEN,
+      `OpenClaude treats a leading/trailing "${HEARTBEAT_TOKEN}" as a heartbeat ack (and may discard it).`,
+      `If something needs attention, do NOT include "${HEARTBEAT_TOKEN}"; reply with the alert text instead.`,
+      "",
+    );
+  }
 
   // --- Extra system prompt (e.g. group chat context) ---
   if (params.extraSystemPrompt?.trim()) {
-    lines.push("## Additional Context", params.extraSystemPrompt.trim(), "");
+    // Use "Subagent Context" header for minimal mode (matches OpenClaw)
+    const contextHeader = isMinimal ? "## Subagent Context" : "## Additional Context";
+    lines.push(contextHeader, params.extraSystemPrompt.trim(), "");
   }
 
   // --- Project Context (bootstrap files) — matches OpenClaw ---
@@ -313,3 +352,4 @@ export function buildChildSystemPrompt(task: string, parentLabel: string): strin
 }
 
 export { SILENT_REPLY_TOKEN, HEARTBEAT_TOKEN };
+export type { PromptMode as PromptModeType };
