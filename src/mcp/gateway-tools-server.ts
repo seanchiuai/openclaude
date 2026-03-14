@@ -16,6 +16,7 @@ if (!GATEWAY_URL) {
 }
 
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
+const CHILD_MODE = process.env.CHILD_MODE === "true";
 
 type McpToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -144,18 +145,48 @@ server.tool(
   (params) => callGateway("/api/logs/tail", params),
 );
 
-// --- Send tool ---
+// --- Send tool (parent-only) ---
 
-server.tool(
-  "send_message",
-  "Send a message to a channel (Telegram, Slack, etc.)",
-  {
-    channel: z.string().describe("Channel name (e.g. 'telegram', 'slack')"),
-    chatId: z.string().describe("Chat/conversation ID to send to"),
-    text: z.string().describe("Message text to send"),
-  },
-  (params) => callGateway("/api/send", params),
-);
+if (!CHILD_MODE) {
+  server.tool(
+    "send_message",
+    "Send a message to a channel (Telegram, Slack, etc.)",
+    {
+      channel: z.string().describe("Channel name (e.g. 'telegram', 'slack')"),
+      chatId: z.string().describe("Chat/conversation ID to send to"),
+      text: z.string().describe("Message text to send"),
+    },
+    (params) => callGateway("/api/send", params),
+  );
+}
+
+// --- Subagent tools (parent-only) ---
+
+if (!CHILD_MODE) {
+  server.tool(
+    "sessions_spawn",
+    "Spawn a background subagent to work on a task. Returns immediately. " +
+    "You will be resumed with the result when the child completes or fails.",
+    {
+      task: z.string().describe("Task description for the child agent"),
+      label: z.string().optional().describe("Short label for status display (e.g. 'research', 'summarize')"),
+      timeoutSeconds: z.number().optional().describe("Timeout in seconds (default: 300, max: 3600)"),
+    },
+    (params) => callGateway("/api/subagent/spawn", {
+      ...params,
+      callerSessionId: process.env.OPENCLAUDE_SESSION_ID,
+    }),
+  );
+
+  server.tool(
+    "sessions_status",
+    "Check the status of your spawned subagents. Shows runId, task, status, and duration for each child.",
+    {},
+    () => callGateway("/api/subagent/status", {
+      callerSessionId: process.env.OPENCLAUDE_SESSION_ID,
+    }),
+  );
+}
 
 // Start the server
 const transport = new StdioServerTransport();

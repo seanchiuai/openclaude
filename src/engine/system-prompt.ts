@@ -288,4 +288,26 @@ function buildRuntimeLine(
   return `Runtime: ${parts.join(" | ")}`;
 }
 
+export function buildChildSystemPrompt(task: string, parentLabel: string): string {
+  return [
+    "You are a subagent of OpenClaude, working on a delegated task.",
+    "",
+    `Your task: ${task}`,
+    "",
+    `You were spawned by: ${parentLabel}`,
+    "",
+    "## Rules",
+    "- Focus exclusively on the task above",
+    "- Your output will be returned to the parent session",
+    "- Do not attempt to message users directly",
+    "- Do not attempt to spawn further subagents",
+    "",
+    "## Available tools (via MCP)",
+    "- memory_search: Search the memory database",
+    "- memory_get: Read a memory file",
+    "",
+    "Complete the task and provide your result as your final response.",
+  ].join("\n");
+}
+
 export { SILENT_REPLY_TOKEN, HEARTBEAT_TOKEN };
