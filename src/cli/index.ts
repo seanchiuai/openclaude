@@ -55,10 +55,7 @@ switch (command) {
 
 async function start() {
   const { readPidFile } = await import("../gateway/lifecycle.js");
-  const {
-    installLaunchAgent,
-    isLaunchAgentLoaded,
-  } = await import("../gateway/launchd.js");
+  const { resolveGatewayService } = await import("../gateway/service.js");
 
   const existingPid = readPidFile();
   if (existingPid) {
@@ -66,39 +63,41 @@ async function start() {
     return;
   }
 
-  if (process.platform === "darwin") {
+  const service = resolveGatewayService();
+  if (service) {
     try {
-      if (isLaunchAgentLoaded()) {
-        console.log("OpenClaude LaunchAgent is already loaded.");
+      if (await service.isLoaded()) {
+        console.log(`OpenClaude ${service.label} is already loaded.`);
         return;
       }
       const nodePath = process.execPath;
       const entryPath = new URL(import.meta.url).pathname;
-      installLaunchAgent(nodePath, entryPath);
-      console.log("OpenClaude started as LaunchAgent.");
+      await service.install(nodePath, entryPath);
+      console.log(`OpenClaude started as ${service.label}.`);
     } catch (err) {
       console.error(
-        "Failed to install LaunchAgent, starting in foreground:",
+        `Failed to install ${service.label}, starting in foreground:`,
         err,
       );
       await gatewayRun();
     }
   } else {
-    // Non-macOS: run in foreground for now
+    // Unsupported platform: run in foreground
     await gatewayRun();
   }
 }
 
 async function stop() {
-  const { readPidFile } = await import("../gateway/lifecycle.js");
+  const { resolveGatewayService } = await import("../gateway/service.js");
+  const service = resolveGatewayService();
 
-  if (process.platform === "darwin") {
-    const { stopLaunchAgent } = await import("../gateway/launchd.js");
-    stopLaunchAgent();
+  if (service) {
+    await service.stop();
     console.log("OpenClaude stop signal sent.");
     return;
   }
 
+  const { readPidFile } = await import("../gateway/lifecycle.js");
   const pid = readPidFile();
   if (!pid) {
     console.log("OpenClaude is not running.");
@@ -115,8 +114,15 @@ async function stop() {
 
 async function status() {
   const { readPidFile } = await import("../gateway/lifecycle.js");
+  const { resolveGatewayService } = await import("../gateway/service.js");
 
-  const pid = readPidFile();
+  // Try service-level PID first, then fall back to PID file
+  const service = resolveGatewayService();
+  let pid = readPidFile();
+  if (!pid && service) {
+    pid = await service.readPid();
+  }
+
   if (!pid) {
     console.log("OpenClaude is not running.");
     return;
@@ -213,7 +219,7 @@ function printUsage() {
 Usage: openclaude <command>
 
 Commands:
-  start   Start the OpenClaude gateway daemon
+  start   Start the OpenClaude gateway daemon (LaunchAgent on macOS, systemd on Linux)
   stop    Stop the gateway daemon
   status  Show gateway status
   setup   Initialize config and directories
@@ -222,6 +228,6 @@ Commands:
   logs         Tail gateway logs
 
 Internal:
-  gateway run   Run gateway in foreground (used by launchd)
+  gateway run   Run gateway in foreground (used by LaunchAgent/systemd)
 `);
 }
