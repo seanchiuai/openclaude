@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { formatAnnounceMessage, createAnnouncePipeline } from "./subagent-announce.js";
 import type { SubagentRun } from "./subagent-registry.js";
 
