@@ -1,5 +1,5 @@
 ---
-last_sync_commit: f2e53eeabb49e30322c46e870a6392d673b95e98
+last_sync_commit: a5af694dee96ddc6517226771314bea1000aba9e
 last_sync_date: 2026-03-13T00:00:00Z
 synced_items:
   - channels
@@ -16,4 +16,4 @@ synced_items:
 ---
 # Sync Notes
 
-Synced at f2e53ee. Updated 7 skill files (channels, gateway, engine, memory, router, cron, config). 4 files unchanged (skills-system, tools, mcp, cli). No PRD.md, TASKS.md, or design.md found.
+Synced at a5af694. Updated 4 skill files (engine, gateway, mcp, router) for multi-agent subagent system. 7 files unchanged (channels, cli, config, cron, memory, skills-system, tools). No PRD.md, TASKS.md, or design.md found.
