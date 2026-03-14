@@ -1,3 +1,7 @@
+import fsSync from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
 import {
   createGeminiEmbeddingProvider,
   type GeminiEmbeddingClient,
@@ -10,6 +14,8 @@ import {
 import { createOllamaEmbeddingProvider, type OllamaEmbeddingClient } from "./embeddings-ollama.js";
 import { createOpenAiEmbeddingProvider, type OpenAiEmbeddingClient } from "./embeddings-openai.js";
 import { createVoyageEmbeddingProvider, type VoyageEmbeddingClient } from "./embeddings-voyage.js";
+import { sanitizeAndNormalizeEmbedding } from "./embedding-vectors.js";
+import { importNodeLlamaCpp } from "./node-llama.js";
 
 export type { GeminiEmbeddingClient } from "./embeddings-gemini.js";
 export type { MistralEmbeddingClient } from "./embeddings-mistral.js";
@@ -26,7 +32,7 @@ export type EmbeddingProvider = {
   embedBatchInputs?: (inputs: import("./embedding-inputs.js").EmbeddingInput[]) => Promise<number[][]>;
 };
 
-export type EmbeddingProviderId = "openai" | "gemini" | "voyage" | "mistral" | "ollama";
+export type EmbeddingProviderId = "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama";
 export type EmbeddingProviderRequest = EmbeddingProviderId | "auto";
 export type EmbeddingProviderFallback = EmbeddingProviderId | "none";
 
@@ -59,7 +65,131 @@ export type EmbeddingProviderOptions = {
     baseUrl?: string;
     headers?: Record<string, string>;
   };
+  local?: {
+    modelPath?: string;
+    modelCacheDir?: string;
+  };
 };
+
+export const DEFAULT_LOCAL_MODEL =
+  "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
+
+function resolveUserPath(p: string): string {
+  if (p.startsWith("~/") || p === "~") {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return path.resolve(p);
+}
+
+function canAutoSelectLocal(options: EmbeddingProviderOptions): boolean {
+  const modelPath = options.local?.modelPath?.trim();
+  if (!modelPath) {
+    return false;
+  }
+  if (/^(hf:|https?:)/i.test(modelPath)) {
+    return false;
+  }
+  const resolved = resolveUserPath(modelPath);
+  try {
+    return fsSync.statSync(resolved).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isNodeLlamaCppMissing(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const code = (err as Error & { code?: unknown }).code;
+  if (code === "ERR_MODULE_NOT_FOUND") {
+    return err.message.includes("node-llama-cpp");
+  }
+  return false;
+}
+
+function formatLocalSetupError(err: unknown): string {
+  const detail = formatErrorMessage(err);
+  const missing = isNodeLlamaCppMissing(err);
+  return [
+    "Local embeddings unavailable.",
+    missing
+      ? "Reason: optional dependency node-llama-cpp is missing (or failed to install)."
+      : detail
+        ? `Reason: ${detail}`
+        : undefined,
+    missing && detail ? `Detail: ${detail}` : null,
+    "To enable local embeddings:",
+    "1) Install node-llama-cpp: npm install node-llama-cpp",
+    ...REMOTE_EMBEDDING_PROVIDER_IDS.map(
+      (provider) => `Or set memory.provider = "${provider}" (remote).`,
+    ),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function createLocalEmbeddingProvider(
+  options: EmbeddingProviderOptions,
+): Promise<EmbeddingProvider> {
+  const modelPath = options.local?.modelPath?.trim() || DEFAULT_LOCAL_MODEL;
+  const modelCacheDir = options.local?.modelCacheDir?.trim();
+
+  const { getLlama, resolveModelFile, LlamaLogLevel } = await importNodeLlamaCpp();
+
+  let llama: Llama | null = null;
+  let embeddingModel: LlamaModel | null = null;
+  let embeddingContext: LlamaEmbeddingContext | null = null;
+  let initPromise: Promise<LlamaEmbeddingContext> | null = null;
+
+  const ensureContext = async (): Promise<LlamaEmbeddingContext> => {
+    if (embeddingContext) {
+      return embeddingContext;
+    }
+    if (initPromise) {
+      return initPromise;
+    }
+    initPromise = (async () => {
+      try {
+        if (!llama) {
+          llama = await getLlama({ logLevel: LlamaLogLevel.error });
+        }
+        if (!embeddingModel) {
+          const resolved = await resolveModelFile(modelPath, modelCacheDir || undefined);
+          embeddingModel = await llama.loadModel({ modelPath: resolved });
+        }
+        if (!embeddingContext) {
+          embeddingContext = await embeddingModel.createEmbeddingContext();
+        }
+        return embeddingContext;
+      } catch (err) {
+        initPromise = null;
+        throw err;
+      }
+    })();
+    return initPromise;
+  };
+
+  return {
+    id: "local",
+    model: modelPath,
+    embedQuery: async (text) => {
+      const ctx = await ensureContext();
+      const embedding = await ctx.getEmbeddingFor(text);
+      return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
+    },
+    embedBatch: async (texts) => {
+      const ctx = await ensureContext();
+      const embeddings = await Promise.all(
+        texts.map(async (text) => {
+          const embedding = await ctx.getEmbeddingFor(text);
+          return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
+        }),
+      );
+      return embeddings;
+    },
+  };
+}
 
 function formatErrorMessage(err: unknown): string {
   if (err instanceof Error) {
@@ -79,7 +209,14 @@ export async function createEmbeddingProvider(
   const requestedProvider = options.provider;
   const fallback = options.fallback ?? "none";
 
+  const formatPrimaryError = (err: unknown, provider: EmbeddingProviderId) =>
+    provider === "local" ? formatLocalSetupError(err) : formatErrorMessage(err);
+
   const createProvider = async (id: EmbeddingProviderId) => {
+    if (id === "local") {
+      const provider = await createLocalEmbeddingProvider(options);
+      return { provider };
+    }
     if (id === "ollama") {
       const { provider, client } = await createOllamaEmbeddingProvider(options);
       return { provider, ollama: client };
@@ -102,6 +239,15 @@ export async function createEmbeddingProvider(
 
   if (requestedProvider === "auto") {
     const missingKeyErrors: string[] = [];
+
+    if (canAutoSelectLocal(options)) {
+      try {
+        const local = await createProvider("local");
+        return { ...local, requestedProvider };
+      } catch {
+        // Local failed; fall through to remote providers
+      }
+    }
 
     for (const provider of REMOTE_EMBEDDING_PROVIDER_IDS) {
       try {
@@ -136,7 +282,7 @@ export async function createEmbeddingProvider(
     const primary = await createProvider(requestedProvider);
     return { ...primary, requestedProvider };
   } catch (primaryErr) {
-    const reason = formatErrorMessage(primaryErr);
+    const reason = formatPrimaryError(primaryErr, requestedProvider);
     if (fallback && fallback !== "none" && fallback !== requestedProvider) {
       try {
         const fallbackResult = await createProvider(fallback);
