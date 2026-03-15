@@ -132,7 +132,8 @@ async function status() {
 
   // Try to fetch status from HTTP endpoint
   try {
-    const resp = await fetch("http://127.0.0.1:45557/api/status");
+    const port = process.env.OPENCLAUDE_GATEWAY_PORT ?? "45557";
+    const resp = await fetch(`http://127.0.0.1:${port}/api/status`);
     if (resp.ok) {
       const data = await resp.json();
       console.log(
@@ -160,7 +161,8 @@ async function setup() {
   ensureDirectories();
   writeDefaultConfig();
   console.log("OpenClaude initialized.");
-  console.log("Edit ~/.openclaude/config.json to configure channels.");
+  const { paths } = await import("../config/paths.js");
+  console.log(`Edit ${paths.config} to configure channels.`);
 }
 
 async function skillsList() {

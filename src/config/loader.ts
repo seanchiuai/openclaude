@@ -63,7 +63,7 @@ const DEFAULT_CONFIG: OpenClaudeConfig = {
   },
   cron: {
     enabled: false,
-    storePath: "~/.openclaude/cron/jobs.json",
+    storePath: paths.cronJobs,
   },
   gateway: {
     port: 45557,

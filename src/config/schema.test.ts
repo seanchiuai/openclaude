@@ -13,6 +13,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { OpenClaudeConfigSchema, TelegramChannelSchema, SlackChannelSchema, AgentSchema } from "./schema.js";
 import { substituteEnvVarsDeep } from "./env-substitution.js";
+import { paths } from "./paths.js";
 
 describe("OpenClaudeConfigSchema", () => {
   it("valid minimal config passes with defaults", () => {
@@ -23,7 +24,7 @@ describe("OpenClaudeConfigSchema", () => {
     expect(result.heartbeat.every).toBe(1_800_000);
     expect(result.channels).toEqual({});
     expect(result.mcp).toEqual({});
-    expect(result.memory.dbPath).toBe("~/.openclaude/memory/openclaude.sqlite");
+    expect(result.memory.dbPath).toBe(paths.memoryDb);
   });
 
   it("valid full config passes", () => {

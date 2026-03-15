@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { paths } from "./paths.js";
 
 export const TelegramChannelSchema = z.object({
   enabled: z.boolean().default(false),
@@ -78,7 +79,7 @@ export const McpServerSchema = z.object({
 
 export const MemorySchema = z.object({
   enabled: z.boolean().default(true),
-  dbPath: z.string().default("~/.openclaude/memory/openclaude.sqlite"),
+  dbPath: z.string().default(paths.memoryDb),
   sources: z.array(z.enum(["memory", "sessions"])).default(["memory"]),
   extraPaths: z.array(z.string()).default([]),
   provider: z.enum(["openai", "local", "gemini", "voyage", "mistral", "ollama", "auto", "none"]).default("none"),
@@ -149,7 +150,7 @@ export const MemorySchema = z.object({
 
 export const CronSchema = z.object({
   enabled: z.boolean().default(false),
-  storePath: z.string().default("~/.openclaude/cron/jobs.json"),
+  storePath: z.string().default(paths.cronJobs),
 });
 
 export const GatewayAuthSchema = z.object({

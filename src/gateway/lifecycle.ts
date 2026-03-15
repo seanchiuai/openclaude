@@ -87,7 +87,9 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     }
   };
 
-  const gatewayPort = config.gateway.port;
+  const gatewayPort = process.env.OPENCLAUDE_GATEWAY_PORT
+    ? parseInt(process.env.OPENCLAUDE_GATEWAY_PORT, 10)
+    : config.gateway.port;
 
   // Reap stale gateway processes from previous crash
   const reaped = cleanStaleGatewayProcessesSync(gatewayPort);

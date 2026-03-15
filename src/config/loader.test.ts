@@ -155,6 +155,7 @@ describe("ensureDirectories", () => {
           workspace: join(dir, "workspace"),
           config: join(dir, "config.json"),
           memoryDb: join(dir, "memory", "openclaude.sqlite"),
+          cronJobs: join(dir, "cron", "jobs.json"),
         },
       };
     });
@@ -204,6 +205,7 @@ describe("writeDefaultConfig", () => {
           workspace: join(dir, "workspace"),
           config: join(dir, "writedefault", "config.json"),
           memoryDb: join(dir, "memory", "openclaude.sqlite"),
+          cronJobs: join(dir, "cron", "jobs.json"),
         },
       };
     });

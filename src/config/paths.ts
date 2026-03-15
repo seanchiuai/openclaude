@@ -2,9 +2,11 @@
  * Standard paths for OpenClaude runtime data.
  */
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-const BASE_DIR = join(homedir(), ".openclaude");
+const BASE_DIR = process.env.OPENCLAUDE_STATE_DIR
+  ? resolve(process.env.OPENCLAUDE_STATE_DIR.replace(/^~(?=\/|$)/, homedir()))
+  : join(homedir(), ".openclaude");
 
 export const paths = {
   base: BASE_DIR,
