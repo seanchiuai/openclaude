@@ -132,7 +132,17 @@ async function status() {
 
   // Try to fetch status from HTTP endpoint
   try {
-    const port = process.env.OPENCLAUDE_GATEWAY_PORT ?? "45557";
+    const DEFAULT_PORT = 45557;
+    const rawPort = process.env.OPENCLAUDE_GATEWAY_PORT;
+    let port = DEFAULT_PORT;
+    if (rawPort) {
+      const parsed = parseInt(rawPort, 10);
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 65535) {
+        console.error(`Invalid OPENCLAUDE_GATEWAY_PORT "${rawPort}", using default ${DEFAULT_PORT}`);
+      } else {
+        port = parsed;
+      }
+    }
     const resp = await fetch(`http://127.0.0.1:${port}/api/status`);
     if (resp.ok) {
       const data = await resp.json();

@@ -325,6 +325,64 @@ describe("startGateway", () => {
     expect(mockCleanStaleGatewayProcessesSync).toHaveBeenCalledWith(45557);
   });
 
+  it("falls back to default port when OPENCLAUDE_GATEWAY_PORT is non-numeric", async () => {
+    const original = process.env.OPENCLAUDE_GATEWAY_PORT;
+    process.env.OPENCLAUDE_GATEWAY_PORT = "not-a-number";
+
+    try {
+      mockLoadConfig.mockReturnValue(minimalConfig());
+      const { startGateway } = await import("./lifecycle.js");
+      await startGateway();
+
+      // Should fall back to config default (45557), not NaN
+      expect(mockStartHttpServer).toHaveBeenCalledWith(mockApp, 45557);
+    } finally {
+      if (original === undefined) {
+        delete process.env.OPENCLAUDE_GATEWAY_PORT;
+      } else {
+        process.env.OPENCLAUDE_GATEWAY_PORT = original;
+      }
+    }
+  });
+
+  it("falls back to default port when OPENCLAUDE_GATEWAY_PORT is out of range", async () => {
+    const original = process.env.OPENCLAUDE_GATEWAY_PORT;
+    process.env.OPENCLAUDE_GATEWAY_PORT = "99999";
+
+    try {
+      mockLoadConfig.mockReturnValue(minimalConfig());
+      const { startGateway } = await import("./lifecycle.js");
+      await startGateway();
+
+      expect(mockStartHttpServer).toHaveBeenCalledWith(mockApp, 45557);
+    } finally {
+      if (original === undefined) {
+        delete process.env.OPENCLAUDE_GATEWAY_PORT;
+      } else {
+        process.env.OPENCLAUDE_GATEWAY_PORT = original;
+      }
+    }
+  });
+
+  it("uses OPENCLAUDE_GATEWAY_PORT when valid", async () => {
+    const original = process.env.OPENCLAUDE_GATEWAY_PORT;
+    process.env.OPENCLAUDE_GATEWAY_PORT = "8080";
+
+    try {
+      mockLoadConfig.mockReturnValue(minimalConfig());
+      const { startGateway } = await import("./lifecycle.js");
+      await startGateway();
+
+      expect(mockStartHttpServer).toHaveBeenCalledWith(mockApp, 8080);
+    } finally {
+      if (original === undefined) {
+        delete process.env.OPENCLAUDE_GATEWAY_PORT;
+      } else {
+        process.env.OPENCLAUDE_GATEWAY_PORT = original;
+      }
+    }
+  });
+
   it("memory sync failure during boot doesn't crash gateway", async () => {
     mockLoadConfig.mockReturnValue(minimalConfig());
     mockMemoryManager.sync.mockRejectedValue(new Error("sync failed"));

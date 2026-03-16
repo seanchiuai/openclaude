@@ -87,9 +87,16 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
     }
   };
 
-  const gatewayPort = process.env.OPENCLAUDE_GATEWAY_PORT
-    ? parseInt(process.env.OPENCLAUDE_GATEWAY_PORT, 10)
-    : config.gateway.port;
+  const gatewayPort = (() => {
+    const envPort = process.env.OPENCLAUDE_GATEWAY_PORT;
+    if (!envPort) return config.gateway.port;
+    const parsed = parseInt(envPort, 10);
+    if (Number.isNaN(parsed) || parsed < 1 || parsed > 65535) {
+      log.warn(`Invalid OPENCLAUDE_GATEWAY_PORT "${envPort}" (must be 1–65535), falling back to default ${config.gateway.port}`);
+      return config.gateway.port;
+    }
+    return parsed;
+  })();
 
   // Reap stale gateway processes from previous crash
   const reaped = cleanStaleGatewayProcessesSync(gatewayPort);
