@@ -23,6 +23,7 @@ import type { SkillCommandSpec } from "../skills/commands.js";
 import type { SkillEntry } from "../skills/loader.js";
 import type { McpServerConfig } from "../config/types.js";
 import { paths } from "../config/paths.js";
+import { createLogger } from "../logging/logger.js";
 import { buildSystemPrompt } from "../engine/system-prompt.js";
 import { shouldFlushMemory, flushSessionToMemory } from "../memory/memory-flush.js";
 import {
@@ -68,11 +69,17 @@ function saveSessionMap(map: Map<string, ChatSession>): void {
   writeFileSync(paths.sessionsMap, JSON.stringify(data, null, 2), "utf-8");
 }
 
+const log = createLogger("router");
+
 function loadSessionMap(): Map<string, ChatSession> {
   try {
     const data = JSON.parse(readFileSync(paths.sessionsMap, "utf-8"));
     return new Map(Object.entries(data));
-  } catch {
+  } catch (err) {
+    log.warn("Failed to load session map; starting with empty sessions", {
+      path: paths.sessionsMap,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return new Map();
   }
 }
