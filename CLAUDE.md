@@ -76,7 +76,7 @@ triggers:
 Review my recent git commits and summarize.
 ```
 
-Trigger matching normalizes leading `/`. Args appended as `\n\nUser request: <args>`.
+Trigger matching normalizes leading `/`. Prompt sent to engine: `Use the "<name>" skill for this request.` with args appended as `\n\nUser input:\n<args>`.
 
 ## MCP Gateway Tools
 
