@@ -119,7 +119,7 @@ export function createRouter(deps: RouterDeps): Router {
       const memories = await memoryManager.search(query, { maxResults: 3 });
       if (memories.length > 0) {
         return memories
-          .map(m => `[${m.citation}] (score: ${m.score.toFixed(2)})\n${m.snippet}`)
+          .map(m => `[${m.citation ?? ""}] (score: ${m.score.toFixed(2)})\n${m.snippet}`)
           .join("\n\n");
       }
     } catch {
