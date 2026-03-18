@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
+import {
+  bm25RankToScore,
+  buildFtsQuery,
+  mergeHybridResults,
+} from "./hybrid.js";
 
 describe("memory hybrid helpers", () => {
   it("buildFtsQuery tokenizes and AND-joins", () => {
@@ -28,7 +32,7 @@ describe("memory hybrid helpers", () => {
     expect(middle).not.toBe(weakest);
   });
 
-  it("mergeHybridResults unions by id and combines weighted scores", async () => {
+  it("mergeHybridResults unions by id and normalizes text scores via bm25RankToScore", async () => {
     const merged = await mergeHybridResults({
       vectorWeight: 0.7,
       textWeight: 0.3,
@@ -51,7 +55,7 @@ describe("memory hybrid helpers", () => {
           endLine: 4,
           source: "memory",
           snippet: "kw-b",
-          textScore: 1.0,
+          textScore: -4.2, // raw BM25 rank (negative = relevant)
         },
       ],
     });
@@ -59,11 +63,14 @@ describe("memory hybrid helpers", () => {
     expect(merged).toHaveLength(2);
     const a = merged.find((r) => r.path === "memory/a.md");
     const b = merged.find((r) => r.path === "memory/b.md");
+    // Vector-only entry: 0.7 * 0.9 + 0.3 * 0 = 0.63
     expect(a?.score).toBeCloseTo(0.7 * 0.9);
-    expect(b?.score).toBeCloseTo(0.3 * 1.0);
+    // Text-only entry: textScore normalized via bm25RankToScore(-4.2) ≈ 0.808
+    expect(b?.score).toBeCloseTo(0.3 * bm25RankToScore(-4.2));
   });
 
   it("mergeHybridResults prefers keyword snippet when ids overlap", async () => {
+    const rawTextScore = -3.0; // raw BM25 rank
     const merged = await mergeHybridResults({
       vectorWeight: 0.5,
       textWeight: 0.5,
@@ -86,13 +93,13 @@ describe("memory hybrid helpers", () => {
           endLine: 2,
           source: "memory",
           snippet: "kw-a",
-          textScore: 1.0,
+          textScore: rawTextScore,
         },
       ],
     });
 
     expect(merged).toHaveLength(1);
     expect(merged[0]?.snippet).toBe("kw-a");
-    expect(merged[0]?.score).toBeCloseTo(0.5 * 0.2 + 0.5 * 1.0);
+    expect(merged[0]?.score).toBeCloseTo(0.5 * 0.2 + 0.5 * bm25RankToScore(rawTextScore));
   });
 });

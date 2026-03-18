@@ -122,7 +122,10 @@ export async function mergeHybridResults(params: {
   }
 
   const merged = Array.from(byId.values()).map((entry) => {
-    const score = params.vectorWeight * entry.vectorScore + params.textWeight * entry.textScore;
+    // Normalize text scores to [0,1] via bm25RankToScore so they're
+    // on the same scale as vector scores before weighted combination.
+    const normalizedTextScore = entry.textScore !== 0 ? bm25RankToScore(entry.textScore) : 0;
+    const score = params.vectorWeight * entry.vectorScore + params.textWeight * normalizedTextScore;
     return {
       path: entry.path,
       startLine: entry.startLine,
