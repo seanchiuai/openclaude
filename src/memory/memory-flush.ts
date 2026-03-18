@@ -67,15 +67,66 @@ function todayDateString(): string {
   return `${y}-${m}-${day}`;
 }
 
+// --- PII / secret redaction ---
+
+/** Patterns that match sensitive data which must not be persisted to memory. */
+const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  // Specific prefixed tokens first (before generic long-string catch-all)
+  // OpenAI / Anthropic style keys
+  { pattern: /\b(sk|pk|ak|rk)-[A-Za-z0-9-]{20,}\b/g, label: "[REDACTED_TOKEN]" },
+  // AWS keys
+  { pattern: /\bAKIA[A-Z0-9]{16}\b/g, label: "[REDACTED_AWS_KEY]" },
+  // Bearer tokens in context
+  { pattern: /Bearer\s+[A-Za-z0-9_.~+/=-]{20,}/gi, label: "Bearer [REDACTED]" },
+  // Connection strings (postgres, mysql, redis, mongo)
+  { pattern: /\b(?:postgres|mysql|redis|mongodb)(?:ql)?:\/\/\S+/gi, label: "[REDACTED_CONN_STRING]" },
+  // password / secret / token assignments
+  { pattern: /(?:password|secret|token|api[_-]?key)\s*[:=]\s*\S+/gi, label: "[REDACTED_CREDENTIAL]" },
+  // Email addresses
+  { pattern: /\b[\w.+-]+@[\w.-]+\.\w{2,}\b/g, label: "[EMAIL]" },
+  // Generic catch-all: long hex/base64 strings (40+ chars, raised to reduce false positives)
+  { pattern: /\b[A-Za-z0-9_-]{40,}\b/g, label: "[REDACTED_KEY]" },
+];
+
+/**
+ * Redact sensitive data from text. Returns the cleaned string.
+ * Facts that become empty or trivial after redaction are discarded upstream.
+ */
+export function redactSensitiveData(text: string): string {
+  let result = text;
+  for (const { pattern, label } of SENSITIVE_PATTERNS) {
+    // Reset lastIndex for global regexes reused across calls
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, label);
+  }
+  return result;
+}
+
+/**
+ * Returns true if the fact is predominantly redacted content
+ * (not useful to persist).
+ */
+function isMostlyRedacted(fact: string): boolean {
+  const redactedCount = (fact.match(/\[REDACTED[^\]]*\]/g) ?? []).length;
+  const wordCount = fact.split(/\s+/).length;
+  return redactedCount > 0 && redactedCount / wordCount > 0.4;
+}
+
+// --- Fact extraction ---
+
 /**
  * Extract key facts from a transcript using simple heuristic.
  * Splits by sentence boundaries, keeps non-trivial sentences (>20 chars).
+ * Redacts sensitive data (API keys, passwords, tokens, emails, etc.)
+ * and discards facts that are predominantly redacted.
  */
 export function extractKeyFacts(transcript: string): string[] {
   return transcript
     .split(/[.!?\n]+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 20);
+    .filter((s) => s.length > 20)
+    .map((s) => redactSensitiveData(s))
+    .filter((s) => !isMostlyRedacted(s));
 }
 
 /**

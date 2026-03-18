@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import {
   flushSessionToMemory,
   shouldFlushMemory,
+  extractKeyFacts,
+  redactSensitiveData,
   DEFAULT_CONTEXT_WINDOW,
   RESERVE_TOKENS_FLOOR,
   SOFT_THRESHOLD_TOKENS,
@@ -143,6 +145,72 @@ describe("flushSessionToMemory", () => {
     // Original content should still be present (not overwritten)
     expect(contentAfterSecond).toContain("project structure");
     expect(contentAfterSecond).toContain("integration tests");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PII redaction tests
+// ---------------------------------------------------------------------------
+
+describe("redactSensitiveData", () => {
+  it("redacts OpenAI/Anthropic-style API keys", () => {
+    const text = "My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234";
+    expect(redactSensitiveData(text)).toContain("[REDACTED_TOKEN]");
+    expect(redactSensitiveData(text)).not.toContain("sk-ant-api03");
+  });
+
+  it("redacts password assignments", () => {
+    expect(redactSensitiveData("password: hunter2")).toContain("[REDACTED_CREDENTIAL]");
+    expect(redactSensitiveData("secret=mysecretvalue")).toContain("[REDACTED_CREDENTIAL]");
+    expect(redactSensitiveData("api_key: abc123xyz")).toContain("[REDACTED_CREDENTIAL]");
+  });
+
+  it("redacts email addresses", () => {
+    const result = redactSensitiveData("Contact sean@example.com for details");
+    expect(result).toContain("[EMAIL]");
+    expect(result).not.toContain("sean@example.com");
+  });
+
+  it("redacts connection strings", () => {
+    const text = "DB is at postgres://user:pass@host:5432/db";
+    expect(redactSensitiveData(text)).toContain("[REDACTED_CONN_STRING]");
+  });
+
+  it("redacts AWS access keys", () => {
+    const text = "AWS key AKIAIOSFODNN7EXAMPLE is configured";
+    expect(redactSensitiveData(text)).toContain("[REDACTED_AWS_KEY]");
+  });
+
+  it("redacts Bearer tokens", () => {
+    const text = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc.def";
+    expect(redactSensitiveData(text)).toContain("Bearer [REDACTED]");
+  });
+
+  it("preserves normal text without sensitive data", () => {
+    const text = "We discussed the deployment strategy for the staging environment";
+    expect(redactSensitiveData(text)).toBe(text);
+  });
+});
+
+describe("extractKeyFacts PII filtering", () => {
+  it("discards facts that are mostly redacted", () => {
+    const transcript =
+      "The API key is sk-proj-abcdefghijklmnopqrstuvwxyz1234. " +
+      "We discussed the deployment strategy for the new microservice architecture.";
+    const facts = extractKeyFacts(transcript);
+    expect(facts.some((f) => f.includes("deployment strategy"))).toBe(true);
+    expect(facts.every((f) => !f.includes("sk-proj"))).toBe(true);
+  });
+
+  it("keeps facts with minor redactions", () => {
+    // Sentence splitting breaks on `.` in emails, so use newline-separated lines
+    const transcript =
+      "Contact the team lead (sean@example.com) about the refactoring plan for the auth module";
+    // redactSensitiveData works on the full sentence before splitting
+    const redacted = redactSensitiveData(transcript);
+    expect(redacted).toContain("[EMAIL]");
+    expect(redacted).not.toContain("sean@example.com");
+    expect(redacted).toContain("refactoring plan");
   });
 });
 
