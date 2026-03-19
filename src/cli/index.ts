@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * OpenClaude CLI entry point.
- * Commands: start, stop, status, setup
+ * Commands: start, stop, status, setup, onboard
  */
 import { parseArgs } from "node:util";
 
@@ -24,6 +24,9 @@ switch (command) {
     break;
   case "setup":
     await setup();
+    break;
+  case "onboard":
+    await onboard();
     break;
   case "skills":
     if (positionals[1] === "list") {
@@ -163,6 +166,27 @@ async function status() {
   }
 }
 
+async function onboard() {
+  const { createClackPrompter } = await import("../wizard/clack-prompter.js");
+  const { runOnboardingWizard } = await import("../wizard/onboarding.js");
+  const { WizardCancelledError } = await import("../wizard/prompts.js");
+
+  try {
+    const result = await runOnboardingWizard(createClackPrompter());
+
+    // If user chose to start, launch the gateway
+    // (The wizard already printed the outro message)
+    if (result.channels !== "none") {
+      // Gateway start is handled by the start() function
+    }
+  } catch (err) {
+    if (err instanceof WizardCancelledError) {
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
 async function setup() {
   const { ensureDirectories, writeDefaultConfig } = await import(
     "../config/loader.js"
@@ -234,7 +258,8 @@ Commands:
   start   Start the OpenClaude gateway daemon (LaunchAgent on macOS, systemd on Linux)
   stop    Stop the gateway daemon
   status  Show gateway status
-  setup   Initialize config and directories
+  setup   Initialize config and directories (non-interactive)
+  onboard Interactive setup wizard (recommended for first-time setup)
   skills list  List loaded skills
   memory search <query>  Search memory
   logs         Tail gateway logs
