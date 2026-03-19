@@ -1,18 +1,23 @@
 ---
-description: Refactors the whole codebase safely
+description: Refactor a specific area of the codebase safely
+argument-hint: <directory or module to refactor>
 ---
 
-# Command: Refactor
+# Refactor
 
+**Target: $ARGUMENTS**
 
-You are a senior software engineer. Refactor the entire codebase for maintainability, consistency, and efficiency.
+If no target was specified, ask the user which directory or module to refactor. Do NOT refactor the entire codebase at once.
 
-- Analyze and map the existing architecture, major dependencies, and modules.
-- Identify code smells, outdated libraries, duplication, and inconsistent patterns.
-- Propose a prioritized refactoring plan.
-- After my approval, refactor module-by-module:
-- Modernize code patterns (e.g., async/await, arrow functions).
-- Remove dead code, merge similar utilities.
-- Update all files with clear commit messages and explanations.
-- Output all changes as diffs and highlight anything risky or needing follow-up tests
-- Ensure all changes are committed before changing anything
+## Procedure
+
+1. **Scope**: Analyze and map the target area — files, exports, dependencies, and consumers.
+2. **Identify issues**: Code smells, duplication, inconsistent patterns, dead code, outdated patterns.
+3. **Propose plan**: Present a prioritized list of changes. Wait for approval before proceeding.
+4. **Execute**: Refactor module-by-module:
+   - Modernize code patterns (e.g., async/await, composables over mixins)
+   - Remove dead code, merge similar utilities
+   - Commit each logical change separately with clear messages
+5. **Verify**: Run `npm run type-check` after changes to ensure nothing broke.
+
+Do NOT change code outside the target area unless it's a direct consumer that needs updating.

@@ -1,6 +1,6 @@
 ---
 description: Deep strategic analysis of recent changes - identify systemic issues and architectural improvements like a CTO/CEO
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, WebSearch
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Agent, WebSearch
 ---
 
 # Strategic Architecture Analysis
@@ -172,6 +172,6 @@ Create a comprehensive report at `docs/strategic-improvements-report.md` with:
 
 ---
 
-After completing the analysis, update project memory (`MEMORY.md`) with key architectural insights for future reference.
+After completing the analysis, ask the user if they want the report saved before writing it to disk.
 
 $ARGUMENTS

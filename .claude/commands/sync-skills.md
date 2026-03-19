@@ -99,7 +99,8 @@ To discover available skills, list the directories in `.claude/skills/`.
 ```
 
 **Process:**
-1. Read `docs/PRD.md`, `TASKS.md`, `docs/design.md`
+1. Check which doc files exist, then read them. Skip any that don't exist:
+   - `docs/PRD.md`, `TASKS.md`, `docs/design.md`
 2. Compare against current codebase state
 3. For each acceptance criterion in PRD.md:
    - Check if feature exists in codebase

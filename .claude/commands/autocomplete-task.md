@@ -73,12 +73,24 @@ status: in_progress
 ## Findings
 ```
 
-### 3. Show plan, confirm, start Ralph Loop
+### 3. Show plan, confirm, start loop
 
-Present the items to the user. Ask them to review. Then start:
+Present the items to the user. Ask them to review.
 
+Then check if the Ralph Loop plugin is available by looking for `/ralph-loop` in the available skills.
+
+**If Ralph Loop is available**, start it:
 ```
 /ralph-loop "Read .claude/docs/issue-tasks.md. Pick next unchecked item, implement it, verify against test criteria, mark done with summary, log findings, commit. If all items done: <promise>TASK COMPLETE</promise>" --max-iterations 20
 ```
+
+**If Ralph Loop is not available**, work through the items sequentially yourself:
+1. Pick the next unchecked item from `issue-tasks.md`
+2. Implement it
+3. Verify against the test criteria
+4. Mark it done with a summary and commit hash
+5. Log any findings
+6. Commit the changes
+7. Repeat until all items are done
 
 $ARGUMENTS

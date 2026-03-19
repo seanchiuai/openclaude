@@ -25,92 +25,65 @@ The file has two types of content:
 
 These sections should NOT be modified unless the project fundamentally changes:
 
-1. **Header + Description** - Project purpose (line 1-3)
-2. **Commands** - npm/npx commands
-3. **Ralph Loop Workflow** - Development process
-4. **Environment Variables** - Env var names (not values)
-5. **Boundaries** - Development rules
+- **Development Rules** — project rules and constraints
+- **Environment Variables** — env var names (not values)
 
 ### Variable Sections (update when codebase changes)
 
-1. **Tech Stack** - Update when:
-   - New framework/library added to package.json
-   - Major dependency replaced (e.g., switched from Anthropic to Vertex)
-   - New integration added (auth, DB, etc.)
-
-2. **Development Phases** - Update when:
-   - Phase structure changes
-   - User story mapping changes
-   - Note: Don't update "current phase" - that's in `development-progress.yaml`
-
-3. **Skills list** - Update when:
-   - New skill directory added to `.claude/skills/`
-   - Skill removed or renamed
+- **Current Focus** — update when the issue objective changes
+- **Architecture** — update when system design changes
+- **File Map** — update when files are added, removed, or significantly modified
+- **Key Context** — update when important technical context changes
+- **Known Issues** — update when issues are found or resolved
 
 ## Update Process
 
 ### Step 1: Gather Current State
 
-```bash
-# Check package.json for dependencies
-cat package.json | jq '.dependencies, .devDependencies'
+Read the current CLAUDE.md and identify all variable sections present.
 
-# List current skills
-ls .claude/skills/
-
-# Check for new env vars in use
-grep -r "process.env" --include="*.ts" --include="*.tsx" | grep -v node_modules
-```
-
-### Step 2: Compare Against CLAUDE.md
+### Step 2: Compare Against Codebase
 
 For each variable section:
 1. Read current CLAUDE.md section
-2. Compare against codebase reality
+2. Compare against codebase reality (file existence, line counts, etc.)
 3. Identify discrepancies only
 
 ### Step 3: Update Only Discrepancies
 
-**Tech Stack updates:**
-- Add new items at end of list
-- Remove items no longer in package.json
-- Update descriptions if technology changed (e.g., "Anthropic" → "Vertex AI")
+**File Map updates:**
+- Verify listed files still exist
+- Update line counts if significantly changed
+- Add new files relevant to the current focus
+- Remove files that no longer exist
 
-**Skills list updates:**
-- Alphabetize skill directories
-- Add new directories found
-- Remove directories no longer present
+**Key Context / Known Issues updates:**
+- Remove resolved issues
+- Add new discoveries
 
 **Do NOT change:**
 - Formatting/indentation
 - Section ordering
-- Wording of constant sections
+- Wording of constant sections (Development Rules, etc.)
 - Line breaks or spacing
 
 ## Validation Checks
 
 Before updating, verify:
 
-### Tech Stack
+### File Map
 ```
-For each item in CLAUDE.md Tech Stack:
-  - Is it still in package.json?
-  - Is the description accurate?
-  - Is it still being used (imports exist)?
-```
-
-### Skills
-```
-For each skill listed:
-  - Does .claude/skills/<name>/ exist?
-  - Does it have SKILL.md?
+For each file listed in File Map:
+  - Does the file still exist?
+  - Is the line count approximately correct?
+  - Is the purpose description accurate?
 ```
 
 ### Environment Variables
 ```
 For each env var listed:
-  - Is it referenced in code or .env.local.example?
-  - Is description accurate?
+  - Is it referenced in code?
+  - Is the description accurate?
 ```
 
 ## Output Format
@@ -118,54 +91,29 @@ For each env var listed:
 ```markdown
 ## CLAUDE.md Sync Report
 
-### Tech Stack
-- ✓ Next.js 14 - verified
-- ✓ Convex - verified
-- ⚠️ Updated: "Anthropic SDK" → "Vercel AI SDK + @ai-sdk/google-vertex"
-- 🆕 Added: "agent-browser (E2E testing)"
+### File Map
+- ✓ 6 files verified
+- ⚠️ Updated: server/utils/avatar/hedra.ts line count 530 → 580
+- 🆕 Added: composables/voice/useAvatarFallback.ts
 
-### Skills
-- ✓ 9 skills verified
-- ✓ All directories exist
+### Key Context
+- ✓ No changes needed
 
-### Environment Variables
-- ✓ All vars documented
-- 🆕 Added: GOOGLE_VERTEX_PROJECT, GOOGLE_CLIENT_EMAIL
+### Known Issues
+- Removed: "Audio sync delay" (resolved in abc123)
 
 ### Changes Made
-- Updated Tech Stack line 10
-- Added 2 env vars
+- Updated File Map (1 line count, 1 new file)
+- Removed 1 resolved known issue
 
 ✅ CLAUDE.md updated (or "No changes needed")
 ```
 
-## Example: Detecting Tech Stack Changes
-
-**package.json has:**
-```json
-{
-  "@ai-sdk/google-vertex": "^1.0.0",
-  "@clerk/nextjs": "^5.0.0",
-  "convex": "^1.0.0"
-}
-```
-
-**CLAUDE.md says:**
-```
-- Anthropic SDK (Claude API)
-- Clerk (authentication)
-```
-
-**Action:**
-- Update "Anthropic SDK" → "Vercel AI SDK + @ai-sdk/google-vertex (Gemini)"
-- Keep "Clerk" unchanged
-
 ## What NOT to Update
 
-1. **Current phase reference** - Points to `development-progress.yaml`
-2. **Specific file paths in examples** - Unless files moved
-3. **The Boundaries section** - These are project rules
-4. **Ralph Loop Workflow** - This is process, not state
+1. **Development Rules** — these are project rules, not state
+2. **Specific file paths in examples** — unless files moved
+3. **Section ordering or formatting** — keep consistent
 
 ## When to Run
 

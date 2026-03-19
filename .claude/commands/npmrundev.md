@@ -1,7 +1,13 @@
 ---
-description: Runs `npm run dev` and ensures the site loads successfully, fixing any blocking errors.
+description: Check if the dev server is running and fix any blocking errors
 ---
 
-# Command: npm run dev
+# Fix Dev Server
 
-Run `npm run dev`. Fix any errors that is preventing the website from loading. If the site is successfully loaded without errors, STOP because you are done!
+1. Check if the dev server is already running by reading `dev.log` or curling `http://localhost:3000/`.
+2. If it's running and healthy — stop, you're done.
+3. If it's not running, start it with `npm run dev` in the background.
+4. If there are errors preventing the site from loading, read the error output and fix them.
+5. After fixing, verify the site loads successfully.
+
+$ARGUMENTS

@@ -1,12 +1,12 @@
 ---
-description: Test the entire user-flow and all functionalities for errors.
+description: Test the entire user-flow and all functionalities for errors
 argument-hint: [feature to test]
 ---
 
-# Command: Full UI Check
+# Full UI Test
 
-1. Start the app (`npm run dev` or project-appropriate command).
-2. Test core features using browser MCP tools (cursor-ide-browser or cursor-browser-extension).
+1. Verify the dev server is running by checking `dev.log` or curling `http://localhost:3000/`.
+2. Test core features using browser automation tools (claude-in-chrome MCP).
 3. If a blocking error occurs, stop testing.
 4. After testing, generate a report grouped by severity:
    - **Critical**: Prevents core user flows or app startup
@@ -17,5 +17,6 @@ argument-hint: [feature to test]
 Notes:
 - If you cannot perform an action (e.g., login), STOP and ask the human. Continue after they say "done."
 - If the app requires long processing after input, stop and tell user to prompt you for the report when ready.
-- If no issues found, note in CHANGELOG.md or inform user (skip full report).
-- Test all major functionalities minimally—don't exhaustively test every small feature.
+- Test all major functionalities minimally — don't exhaustively test every small feature.
+
+$ARGUMENTS

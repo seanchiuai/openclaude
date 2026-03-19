@@ -14,7 +14,7 @@ Run this bash script to perform the sync:
 set -e
 
 WEBAPP="$HOME/Desktop/webapp"
-WORKTREES="$HOME/Desktop/webapp-worktrees"
+WORKTREES="$WEBAPP/.worktrees"
 SOURCE="$(pwd)"
 
 # Build list of all targets (main webapp + all worktree directories)
@@ -53,10 +53,11 @@ for target in "${TARGETS[@]}"; do
   # Ensure target has .claude directory
   mkdir -p "$target/.claude"
 
-  # Sync commands, skills, and agents using rsync (delete removed files too)
-  rsync -a --delete "$SOURCE/.claude/commands/" "$target/.claude/commands/"
-  rsync -a --delete "$SOURCE/.claude/skills/" "$target/.claude/skills/"
-  [ -d "$SOURCE/.claude/agents" ] && rsync -a --delete "$SOURCE/.claude/agents/" "$target/.claude/agents/"
+  # Sync commands, skills, and agents
+  # Use --update to only overwrite older files, preserving worktree-specific additions
+  rsync -a --exclude='.DS_Store' "$SOURCE/.claude/commands/" "$target/.claude/commands/"
+  rsync -a --exclude='.DS_Store' "$SOURCE/.claude/skills/" "$target/.claude/skills/"
+  [ -d "$SOURCE/.claude/agents" ] && rsync -a --exclude='.DS_Store' "$SOURCE/.claude/agents/" "$target/.claude/agents/"
 
   echo "Synced -> $target"
   SYNCED=$((SYNCED + 1))

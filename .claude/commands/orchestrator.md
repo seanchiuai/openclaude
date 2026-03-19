@@ -46,10 +46,10 @@ When activated, immediately:
 
 ### Subagent Management
 
-You have the built-in ability to spawn subagents via the `Task` tool. This is your primary means of execution. **You do not ask the human to run agents — you run them yourself.**
+You have the built-in ability to spawn subagents via the `Agent` tool. This is your primary means of execution. **You do not ask the human to run agents — you run them yourself.**
 
 #### Spawning Subagents
-- Use the `Task` tool to spawn subagents for each unit of work.
+- Use the `Agent` tool to spawn subagents for each unit of work.
 - Each subagent gets a detailed prompt containing everything it needs: objective, specification, context file paths, constraints, and verification steps.
 - Subagents cannot see your conversation or prior context. Their prompt must be **fully self-contained** — include all relevant file paths, function signatures, data structures, conventions, and acceptance criteria.
 - Launch independent subagents in parallel when tasks have no dependencies. Wait for results from blocking tasks before spawning dependent ones.
