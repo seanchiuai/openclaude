@@ -5,7 +5,7 @@
  * Loads user-editable workspace files (AGENTS.md, SOUL.md, etc.) from ~/.openclaude/
  * and builds them into context files for system prompt injection.
  */
-import { readFileSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../config/paths.js";
 
@@ -226,6 +226,47 @@ export function buildBootstrapContextFiles(
   }
 
   return { contextFiles, truncationWarnings };
+}
+
+// --- Onboarding state tracking (matches OpenClaw's workspace-state.json) ---
+
+const WORKSPACE_STATE_DIRNAME = ".openclaude";
+const WORKSPACE_STATE_FILENAME = "workspace-state.json";
+const WORKSPACE_STATE_VERSION = 1 as const;
+
+interface WorkspaceOnboardingState {
+  version: typeof WORKSPACE_STATE_VERSION;
+  bootstrapSeededAt?: string;
+  onboardingCompletedAt?: string;
+}
+
+function resolveWorkspaceStatePath(dir: string): string {
+  return join(dir, WORKSPACE_STATE_DIRNAME, WORKSPACE_STATE_FILENAME);
+}
+
+function readWorkspaceOnboardingState(statePath: string): WorkspaceOnboardingState {
+  try {
+    const raw = readFileSync(statePath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") {
+      return { version: WORKSPACE_STATE_VERSION };
+    }
+    return {
+      version: WORKSPACE_STATE_VERSION,
+      bootstrapSeededAt:
+        typeof parsed.bootstrapSeededAt === "string" ? parsed.bootstrapSeededAt : undefined,
+      onboardingCompletedAt:
+        typeof parsed.onboardingCompletedAt === "string" ? parsed.onboardingCompletedAt : undefined,
+    };
+  } catch {
+    return { version: WORKSPACE_STATE_VERSION };
+  }
+}
+
+function writeWorkspaceOnboardingState(statePath: string, state: WorkspaceOnboardingState): void {
+  mkdirSync(join(statePath, ".."), { recursive: true });
+  const payload = `${JSON.stringify(state, null, 2)}\n`;
+  writeFileSync(statePath, payload, "utf-8");
 }
 
 // --- Workspace scaffolding (matches OpenClaw's ensureAgentWorkspace) ---
@@ -461,37 +502,140 @@ _Good luck out there. Make it count._
 };
 
 /**
+ * Write a file only if it doesn't already exist (never overwrites user edits).
+ * Matches OpenClaw's writeFileIfMissing() using O_CREAT|O_EXCL via flag "wx".
+ */
+function writeFileIfMissing(filePath: string, content: string): boolean {
+  try {
+    writeFileSync(filePath, content, { encoding: "utf-8", flag: "wx" });
+    return true;
+  } catch (err) {
+    const anyErr = err as { code?: string };
+    if (anyErr.code !== "EEXIST") throw err;
+    return false;
+  }
+}
+
+/**
  * Ensure workspace directory and bootstrap files exist.
- * Matches OpenClaw's ensureAgentWorkspace().
+ * Matches OpenClaw's ensureAgentWorkspace() with full onboarding state tracking.
  *
- * Only writes files that don't already exist (never overwrites user edits).
+ * State machine (persisted in .openclaude/workspace-state.json):
+ * 1. Brand new workspace → seed all templates including BOOTSTRAP.md, record bootstrapSeededAt
+ * 2. BOOTSTRAP.md seeded but now deleted → user completed onboarding, record onboardingCompletedAt
+ * 3. Existing workspace with unmodified IDENTITY/USER templates → onboarding never happened,
+ *    re-seed BOOTSTRAP.md (legacy migration)
+ * 4. Existing workspace with customized files → onboarding already done, skip BOOTSTRAP.md
  */
 export function ensureAgentWorkspace(dir?: string): void {
   const workspaceDir = dir ?? paths.base;
   mkdirSync(workspaceDir, { recursive: true });
 
-  // Check if this is a brand new workspace (no bootstrap files exist yet)
-  const hasAnyBootstrapFile = BOOTSTRAP_FILE_NAMES.some((name) => {
-    try {
-      return statSync(join(workspaceDir, name)).isFile();
-    } catch {
-      return false;
-    }
-  });
+  const bootstrapPath = join(workspaceDir, DEFAULT_BOOTSTRAP_FILENAME);
+  const identityPath = join(workspaceDir, DEFAULT_IDENTITY_FILENAME);
+  const userPath = join(workspaceDir, DEFAULT_USER_FILENAME);
+  const statePath = resolveWorkspaceStatePath(workspaceDir);
 
-  // Also check for memory directory as sign of existing workspace
-  const hasMemoryDir = existsSync(join(workspaceDir, "memory"));
-
-  const isBrandNew = !hasAnyBootstrapFile && !hasMemoryDir;
-
+  // Write all non-BOOTSTRAP templates that don't exist yet
   for (const [name, template] of Object.entries(TEMPLATES)) {
-    // BOOTSTRAP.md only written for brand new workspaces
-    if (name === DEFAULT_BOOTSTRAP_FILENAME && !isBrandNew) continue;
-
-    const filePath = join(workspaceDir, name);
-    if (existsSync(filePath)) continue;
-    writeFileSync(filePath, template, "utf-8");
+    if (name === DEFAULT_BOOTSTRAP_FILENAME) continue;
+    writeFileIfMissing(join(workspaceDir, name), template);
   }
+
+  // --- Onboarding state machine (matches OpenClaw lines 385-446) ---
+  let state = readWorkspaceOnboardingState(statePath);
+  let stateDirty = false;
+  const markState = (next: Partial<WorkspaceOnboardingState>) => {
+    state = { ...state, ...next };
+    stateDirty = true;
+  };
+  const nowIso = () => new Date().toISOString();
+
+  let bootstrapExists = existsSync(bootstrapPath);
+
+  // If BOOTSTRAP.md exists but we haven't recorded it, record it now
+  if (!state.bootstrapSeededAt && bootstrapExists) {
+    markState({ bootstrapSeededAt: nowIso() });
+  }
+
+  // If BOOTSTRAP.md was seeded but is now gone, user completed onboarding
+  if (!state.onboardingCompletedAt && state.bootstrapSeededAt && !bootstrapExists) {
+    markState({ onboardingCompletedAt: nowIso() });
+  }
+
+  // No state at all and no BOOTSTRAP.md → decide if we need to seed it
+  if (!state.bootstrapSeededAt && !state.onboardingCompletedAt && !bootstrapExists) {
+    // Legacy migration: check if IDENTITY/USER have been customized from templates.
+    // Also check for user-content indicators (memory dir, MEMORY.md, .git).
+    const identityTemplate = TEMPLATES[DEFAULT_IDENTITY_FILENAME]!;
+    const userTemplate = TEMPLATES[DEFAULT_USER_FILENAME]!;
+
+    let identityContent = "";
+    let userContent = "";
+    try {
+      identityContent = readFileSync(identityPath, "utf-8");
+    } catch { /* missing is fine */ }
+    try {
+      userContent = readFileSync(userPath, "utf-8");
+    } catch { /* missing is fine */ }
+
+    // Check for user-content indicators that signal an actively used workspace.
+    // Note: unlike OpenClaw, OpenClaude's setup creates memory/ upfront, so we
+    // check for actual files inside it rather than just the directory existing.
+    const hasUserContentIndicators = (() => {
+      // MEMORY.md or .git existing is a strong signal
+      if (existsSync(join(workspaceDir, DEFAULT_MEMORY_FILENAME))) return true;
+      if (existsSync(join(workspaceDir, ".git"))) return true;
+      // memory/ dir with actual files (not just an empty dir from setup)
+      const memoryDir = join(workspaceDir, "memory");
+      if (existsSync(memoryDir)) {
+        try {
+          const entries = readdirSync(memoryDir);
+          if (entries.length > 0) return true;
+        } catch { /* ignore */ }
+      }
+      return false;
+    })();
+
+    const legacyOnboardingCompleted =
+      identityContent !== identityTemplate ||
+      userContent !== userTemplate ||
+      hasUserContentIndicators;
+
+    if (legacyOnboardingCompleted) {
+      // Workspace was already onboarded before state tracking existed
+      markState({ onboardingCompletedAt: nowIso() });
+    } else {
+      // Fresh workspace that needs onboarding — seed BOOTSTRAP.md
+      const wrote = writeFileIfMissing(bootstrapPath, TEMPLATES[DEFAULT_BOOTSTRAP_FILENAME]!);
+      if (!wrote) {
+        bootstrapExists = existsSync(bootstrapPath);
+      } else {
+        bootstrapExists = true;
+      }
+      if (bootstrapExists && !state.bootstrapSeededAt) {
+        markState({ bootstrapSeededAt: nowIso() });
+      }
+    }
+  }
+
+  if (stateDirty) {
+    writeWorkspaceOnboardingState(statePath, state);
+  }
+}
+
+/**
+ * Check if workspace onboarding has been completed.
+ * Matches OpenClaw's isWorkspaceOnboardingCompleted().
+ */
+export function isWorkspaceOnboardingCompleted(dir?: string): boolean {
+  const workspaceDir = dir ?? paths.base;
+  const statePath = resolveWorkspaceStatePath(workspaceDir);
+  const state = readWorkspaceOnboardingState(statePath);
+  return (
+    typeof state.onboardingCompletedAt === "string" &&
+    state.onboardingCompletedAt.trim().length > 0
+  );
 }
 
 export {

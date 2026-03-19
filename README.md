@@ -59,31 +59,34 @@ OpenClaude connects to Telegram and Slack, remembers everything, runs scheduled 
 ## Quick Start
 
 ```bash
-# Clone and install
+# 1. Clone and install
 git clone https://github.com/yourusername/openclaude.git
 cd openclaude
 pnpm install
 pnpm build
 
-# Create config
-mkdir -p ~/.openclaude/{memory,skills,sessions,cron,logs}
-
-cat > ~/.openclaude/config.json << 'EOF'
-{
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "botToken": "YOUR_BOT_TOKEN"
-    }
-  }
-}
-EOF
-
-# Start the gateway
-openclaude start
+# 2. Run the onboarding wizard
+openclaude onboard
 ```
 
-To get a Telegram bot token, talk to [@BotFather](https://t.me/BotFather). To restrict access, add `"allowFrom": ["YOUR_TELEGRAM_USER_ID"]` — get your ID from [@userinfobot](https://t.me/userinfobot).
+The wizard walks you through:
+1. Checking that Claude Code CLI is installed and authenticated
+2. Connecting channels (Telegram, Slack, both, or neither)
+3. Choosing a memory/embedding provider
+4. Creating `~/.openclaude/` with all config and directories
+5. Optionally starting the gateway
+
+To get a Telegram bot token, talk to [@BotFather](https://t.me/BotFather). To restrict access, add `"allowFrom": ["YOUR_TELEGRAM_USER_ID"]` to your config — get your ID from [@userinfobot](https://t.me/userinfobot).
+
+### Manual setup (alternative)
+
+If you prefer to configure manually:
+
+```bash
+openclaude setup        # Creates directories + minimal config
+vi ~/.openclaude/config.json  # Add your channel tokens
+openclaude start        # Start the gateway
+```
 
 ## Configuration
 
@@ -150,10 +153,11 @@ Config lives at `~/.openclaude/config.json`. Environment variables are expanded 
 ## CLI
 
 ```bash
+openclaude onboard        # Interactive setup wizard (first-time)
+openclaude setup          # Non-interactive setup (directories + minimal config)
 openclaude start          # Start the daemon
 openclaude stop           # Stop the daemon
 openclaude status         # Show running status and pool stats
-openclaude setup          # Interactive config generator
 openclaude skills list    # List loaded skills
 openclaude memory search  # Search memory from CLI
 openclaude logs           # Tail gateway logs
