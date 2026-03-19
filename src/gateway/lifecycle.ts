@@ -33,6 +33,7 @@ import type { CronService } from "../cron/index.js";
 import type { HeartbeatRunner } from "../cron/heartbeat.js";
 import type { CronDeliveryTarget } from "../cron/types.js";
 import type { OnStreamEvent } from "../engine/types.js";
+import { resolveModelForContext } from "../engine/model.js";
 
 export interface Gateway {
   config: OpenClaudeConfig;
@@ -132,6 +133,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
             mcpConfig: config.mcp,
             gatewayUrl,
             gatewayToken,
+            model: resolveModelForContext("cron", config.agent),
           });
           return { status: "ok" as const, summary: result.text };
         } catch (err) {
@@ -174,6 +176,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
               mcpConfig: config.mcp,
               gatewayUrl,
               gatewayToken,
+              model: resolveModelForContext("heartbeat", config.agent),
             });
             return { status: "ok" as const, summary: result.text };
           } catch (err) {
@@ -194,7 +197,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
   }
 
   // Router returns response text — the channel bot sends it back directly
-  const rawRouter = createRouter({ pool, memoryManager: memoryManager ?? undefined, cronService, subagentRegistry, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken });
+  const rawRouter = createRouter({ pool, memoryManager: memoryManager ?? undefined, cronService, subagentRegistry, skills, mcpConfig: config.mcp, gatewayUrl, gatewayToken, agentConfig: config.agent });
   const router: typeof rawRouter = (msg, onEvent) => {
     markActivity();
     return rawRouter(msg, onEvent);
@@ -232,7 +235,7 @@ export async function startGateway(configPath?: string): Promise<Gateway> {
       mcpConfig: config.mcp,
       gatewayUrl,
       gatewayToken,
-      model: run.model,
+      model: resolveModelForContext("subagent", config.agent, run.model),
     }).then((result) => {
       subagentRegistry.endRun(run.runId, "completed", result.text);
       const updatedRun = subagentRegistry.get(run.runId)!;

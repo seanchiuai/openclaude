@@ -33,4 +33,5 @@ export interface ChatSession {
   compactionCount: number;    // How many times auto-compaction fired
   lastCompactedAt?: number;   // Timestamp of last compaction
   lastFlushCompactionCount?: number; // compactionCount at last memory flush
+  pinnedModel?: string;       // Model resolved on first message, reused on resume
 }

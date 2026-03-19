@@ -25,6 +25,10 @@ export interface AgentConfig {
   maxConcurrent: number;
   defaultTimeout: number;
   model?: string;
+  heartbeatModel?: string;
+  cronModel?: string;
+  subagentModel?: string;
+  aliases?: Record<string, string>;
 }
 
 export interface HeartbeatAgentConfig {

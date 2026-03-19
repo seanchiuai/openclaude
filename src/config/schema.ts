@@ -28,6 +28,10 @@ export const AgentSchema = z.object({
   maxConcurrent: z.number().int().min(1).max(16).default(4),
   defaultTimeout: z.number().int().min(10_000).default(300_000),
   model: z.string().optional(),
+  heartbeatModel: z.string().optional(),
+  cronModel: z.string().optional(),
+  subagentModel: z.string().optional(),
+  aliases: z.record(z.string()).optional(),
 });
 
 export const HeartbeatAgentSchema = z.object({

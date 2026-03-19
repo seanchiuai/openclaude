@@ -21,7 +21,8 @@ import {
 } from "../skills/commands.js";
 import type { SkillCommandSpec } from "../skills/commands.js";
 import type { SkillEntry } from "../skills/loader.js";
-import type { McpServerConfig } from "../config/types.js";
+import type { AgentConfig, McpServerConfig } from "../config/types.js";
+import { resolveModelForContext } from "../engine/model.js";
 import { paths } from "../config/paths.js";
 import { createLogger } from "../logging/logger.js";
 import { buildSystemPrompt } from "../engine/system-prompt.js";
@@ -85,6 +86,7 @@ function loadSessionMap(): Map<string, ChatSession> {
 }
 
 export interface RouterDeps extends CommandDeps {
+  agentConfig?: AgentConfig;
   skills?: SkillEntry[];
   mcpConfig?: Record<string, McpServerConfig>;
   gatewayUrl?: string;
@@ -103,6 +105,7 @@ export function createRouter(deps: RouterDeps): Router {
   const mcpConfig = deps.mcpConfig;
   const gatewayUrl = deps.gatewayUrl;
   const gatewayToken = deps.gatewayToken;
+  const agentConfig = deps.agentConfig;
 
   // Build command specs from loaded skills (matches OpenClaw's buildWorkspaceSkillCommandSpecs)
   const skillCommands: SkillCommandSpec[] = buildSkillCommandSpecs(
@@ -251,6 +254,7 @@ export function createRouter(deps: RouterDeps): Router {
         );
 
         try {
+          const skillModel = agentConfig ? resolveModelForContext("skill", agentConfig) : undefined;
           const result = await pool.submit({
             sessionId: chatSession.sessionId,
             prompt,
@@ -260,7 +264,11 @@ export function createRouter(deps: RouterDeps): Router {
             mcpConfig,
             gatewayUrl,
             gatewayToken,
+            model: chatSession.pinnedModel ?? skillModel,
           }, onProgress);
+          if (!chatSession.pinnedModel && skillModel) {
+            chatSession.pinnedModel = skillModel;
+          }
           chatSession.messageCount++;
           chatSession.lastMessageAt = Date.now();
           updateSessionUsage(chatSession, result);
@@ -292,6 +300,7 @@ export function createRouter(deps: RouterDeps): Router {
           mcpConfig,
           gatewayUrl,
           gatewayToken,
+          model: agentConfig ? resolveModelForContext("cron", agentConfig) : undefined,
         });
         return result.text;
       } catch (err) {
@@ -329,6 +338,10 @@ export function createRouter(deps: RouterDeps): Router {
     const isResume = chatSession.messageCount > 0;
     const systemPrompt = isResume ? undefined : await buildFirstMessageSystemPrompt(message.text, message);
 
+    // Session model pinning: resolve on first message, reuse on resume
+    const userModel = chatSession.pinnedModel
+      ?? (agentConfig ? resolveModelForContext("user", agentConfig) : undefined);
+
     try {
       const result = await pool.submit({
         sessionId: chatSession.sessionId,
@@ -339,7 +352,12 @@ export function createRouter(deps: RouterDeps): Router {
         mcpConfig,
         gatewayUrl,
         gatewayToken,
+        model: userModel,
       }, onProgress);
+      // Pin model on first message
+      if (!chatSession.pinnedModel && userModel) {
+        chatSession.pinnedModel = userModel;
+      }
       chatSession.messageCount++;
       chatSession.lastMessageAt = Date.now();
       updateSessionUsage(chatSession, result);
