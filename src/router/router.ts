@@ -148,7 +148,7 @@ export function createRouter(deps: RouterDeps): Router {
       memoryContext: params.memoryContext,
       hasGatewayTools: !!gatewayUrl,
       channel: params.channel,
-      workspaceDir: process.cwd(),
+      workspaceDir: paths.base,
       contextFiles,
       bootstrapTruncationWarnings: truncationWarnings,
       // Cron/subagent sessions use minimal mode: skip Skills, Memory Recall,
