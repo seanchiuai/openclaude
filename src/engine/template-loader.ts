@@ -3,8 +3,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// In both src/ (vitest) and dist/ (compiled), go up to project root
-const PROJECT_ROOT = join(__dirname, "..", "..");
+// Resolve project root from both src/engine/ (vitest) and dist/ (bundled).
+// In vitest: __dirname = src/engine → ../../ = project root
+// In dist:   __dirname = dist      → ../  = project root
+// We detect by checking if __dirname ends with src/engine.
+const PROJECT_ROOT = __dirname.endsWith(join("src", "engine"))
+  ? join(__dirname, "..", "..")
+  : join(__dirname, "..");
 const PROMPTS_DIR = join(PROJECT_ROOT, "src", "engine", "prompts");
 
 const cache = new Map<string, { content: string; mtimeMs: number }>();
