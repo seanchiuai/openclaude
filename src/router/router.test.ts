@@ -1,11 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock fs for session map persistence (must be before imports)
+// Mock fs for session map persistence (must be before imports).
+// Pass through reads for prompt template files so the template loader works.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
-    readFileSync: vi.fn(() => { throw new Error("ENOENT"); }),
+    readFileSync: vi.fn((path: string, ...args: unknown[]) => {
+      if (typeof path === "string" && path.includes("/prompts/")) {
+        return actual.readFileSync(path, ...args as [BufferEncoding]);
+      }
+      throw new Error("ENOENT");
+    }),
+    statSync: vi.fn((path: string, ...args: unknown[]) => {
+      if (typeof path === "string" && path.includes("/prompts/")) {
+        return actual.statSync(path, ...args as []);
+      }
+      throw new Error("ENOENT");
+    }),
     writeFileSync: vi.fn(),
   };
 });
