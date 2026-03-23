@@ -1,8 +1,4 @@
 .DS_Store
 node_modules/
-dist/
 *.sqlite
 .worktrees/
-openclaw-source/
-~/
-docs/
