@@ -24,9 +24,11 @@ scripts/
   health-check.sh    # System cron: verify Hindsight + ClaudeClaw alive
   export-agent.sh    # Bundle agent + Hindsight data for migration
   import-agent.sh    # Restore agent on new machine
+  test/              # Bats test files
 
 docs/
   plans/             # Architecture docs and gameplans
+  setup.md           # Setup guide
 ```
 
 ## Installed Agent Layout
