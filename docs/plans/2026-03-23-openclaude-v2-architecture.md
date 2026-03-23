@@ -218,27 +218,36 @@ and zero cloud dependency.
 - Cron scheduler with timezone support + exclude windows
 - Heartbeat (periodic checklist review + proactive action)
 - Web dashboard at configurable port
-- Session management via SQLite (session IDs, turn counts, compact tracking)
+- Session management via JSON file (`sessions-map.json` — turn counts, compact tracking)
 - Model routing (agentic mode with task-type detection)
 
-**How ClaudeClaw spawns Claude Code** (verified from source):
+**How ClaudeClaw spawns Claude Code** (verified from source — `src/runner.ts`):
 ```
-Bun.spawn(["claude", "-p", prompt,
-  "--output-format", "json|text",
+// First message (new session):
+Bun.spawn(["claude", "-p",
+  "--output-format", "json",
   "--dangerously-skip-permissions",
   "--append-system-prompt", "<identity + CLAUDE.md>",
-  "--resume", sessionId           // on subsequent messages
-])
+], { stdin: prompt })
+
+// Subsequent messages (resume):
+Bun.spawn(["claude", "-p",
+  "--output-format", "text",
+  "--dangerously-skip-permissions",
+  "--append-system-prompt", "<identity + CLAUDE.md>",
+  "--resume", sessionId,
+], { stdin: prompt })
 ```
 - Uses raw `claude -p` CLI — NOT the Agent SDK
-- Injects workspace identity via `--append-system-prompt` on EVERY call
-  (because `--append-system-prompt` does not persist across `--resume`)
+- Prompts sent via **stdin**, not CLI args
+- `--append-system-prompt` injects identity on **every** call (new + resume)
+  — this is critical because it re-injects workspace content that would
+  otherwise be lost after compaction
 - Reads IDENTITY.md, USER.md, SOUL.md from its `prompts/` directory
 - Also reads project-level `CLAUDE.md` and appends it
-- Manages sessions internally (JSON output on first call to capture session_id,
-  then `--resume` on subsequent calls)
+- JSON output on first call to capture `session_id`, text on resume
 - Serial queue prevents concurrent `--resume` on same session
-- Auto-compact on timeout (exit 124)
+- Auto-compact on timeout (exit 124), then retry
 - Fallback model on rate limit
 - `--dangerously-skip-permissions` works with Pro/Max subscription (verified)
 
@@ -246,19 +255,24 @@ Bun.spawn(["claude", "-p", prompt,
 - Each agent = separate ClaudeClaw process started from different CWD
 - Each needs its own Telegram bot token (one bot per agent)
 - Sessions isolated by CWD (different `~/.claude/projects/<encoded-cwd>/`)
-- Same Hindsight instance shared (needs tenant isolation — see Known Issues)
+- Each agent gets its own Hindsight Docker container (hard isolation)
 
-**Hindsight** (MCP server — advanced memory):
+**Hindsight** (MCP server — one container per agent):
 - **Retain**: store facts, experiences, and mental models
 - **Recall**: 4 parallel strategies (semantic + BM25 + graph + temporal) + reranking
 - **Reflect**: generate new insights from existing memories
 - Entity resolution (deduplicate people, concepts, decisions)
 - Knowledge graph with entity/temporal/causal links
 - Biomimetic memory types: world facts, experiences, learned mental models
-- Per-user isolation with custom metadata (can isolate per agent)
 - MCP-first: native integration with Claude Code
 - Runs as Docker container with embedded PostgreSQL
 - Optional: Ollama for fully local operation (no API key)
+- **Per-agent deployment:** each agent gets its own container on a unique port:
+  - `hindsight-nova` → `:8888` / `:9999`
+  - `hindsight-atlas` → `:8890` / `:9990`
+  - Each agent's `.mcp.json` points to its own port
+  - Data volumes: `~/.hindsight-<agent>/` per agent
+  - ~200MB RAM per container
 
 **Native Claude Code** (zero dependencies):
 - Skills — reusable workflows
@@ -395,32 +409,53 @@ from that project directory instead of through the assistant.
 
 ### 2. Hindsight Multi-Agent Isolation
 
-**Problem:** All agents share one Hindsight instance. No tenant enforcement.
+**Problem:** Agents sharing one Hindsight instance risk memory cross-contamination.
 
-**Fix:** Use Hindsight's `bank_id` parameter — each agent gets its own memory
-bank. Configure in each agent's `.mcp.json`:
-```json
-{
-  "mcpServers": {
-    "hindsight": {
-      "type": "http",
-      "url": "http://localhost:8888/mcp/nova"
-    }
-  }
-}
+**Fix:** Separate Docker container per agent. Hard isolation, no shared state:
+```bash
+# Nova's memory
+docker run -d --name hindsight-nova -p 8888:8888 -p 9999:9999 \
+  -v ~/.hindsight-nova:/home/hindsight/.pg0 \
+  ghcr.io/vectorize-io/hindsight:latest
+
+# Atlas's memory
+docker run -d --name hindsight-atlas -p 8890:8888 -p 9990:9999 \
+  -v ~/.hindsight-atlas:/home/hindsight/.pg0 \
+  ghcr.io/vectorize-io/hindsight:latest
 ```
-If Hindsight doesn't support per-bank URL routing, fall back to separate
-containers per agent on different ports.
+
+Each agent's `.mcp.json` points to its own port:
+```json
+{ "mcpServers": { "hindsight": { "type": "http", "url": "http://localhost:8888/mcp" } } }
+```
+
+**Cost:** ~200MB RAM per container. Acceptable for 2-3 agents on a laptop.
 
 ### 3. Memory Retention Reliability
 
 **Problem:** Relying on the agent to call `retain` is voluntary compliance.
 
-**Fix:** Claude Code `Stop` hook triggers `scripts/auto-retain.sh`, which reads
-the session transcript and calls Hindsight's HTTP API to retain extracted facts.
-This is deterministic — happens on every session end regardless of agent behavior.
+**Fix: Hybrid approach** — voluntary + automatic safety net.
 
-**Custom code:** ~40 lines of bash.
+**During session:** AGENTS.md instructs the agent to `retain` important facts
+as they come up. This captures context-rich memories with the agent's judgment.
+
+**On session end:** Claude Code `Stop` hook triggers `scripts/auto-retain.sh`:
+1. Reads session transcript from `~/.claude/projects/<encoded-cwd>/`
+2. Spawns a lightweight `claude -p` call (Haiku/Sonnet) with prompt:
+   "Extract key facts, decisions, preferences, and outcomes from this transcript.
+   Exclude anything already retained to Hindsight during the session.
+   Output as a JSON array of strings."
+3. Calls Hindsight HTTP API to retain each extracted fact
+4. Logs what was retained to `workspace/memory/retain.log`
+
+**Dedupe:** The extraction prompt explicitly excludes facts already retained
+during the session. Not perfect, but Hindsight's entity resolution handles
+duplicate facts gracefully (merges rather than duplicates).
+
+**Cost:** One Haiku call per session end (~5-10s, minimal tokens).
+
+**Custom code:** ~50 lines of bash.
 
 ### 4. MEMORY.md Governance
 
@@ -473,13 +508,34 @@ write access, not full write.
 credentials checklist. `scripts/import-agent.sh` restores on new machine.
 Portability = "restorable from manifest," not just "copy folder."
 
+### 10. Identity Drift Between Interactive and Daemon Paths
+
+**Problem:** Interactive mode loads 6 workspace files via `@import` in CLAUDE.md.
+ClaudeClaw reads its own `prompts/` directory (IDENTITY.md, USER.md, SOUL.md)
+and appends project CLAUDE.md. Different source files = eventual drift.
+
+**Fix:** ClaudeClaw's `prompts/` directory must be **symlinked** to the agent's
+workspace files. During `scripts/setup.sh`:
+```bash
+ln -sf "$AGENT_DIR/workspace/IDENTITY.md" "$AGENT_DIR/.claude/claudeclaw/prompts/IDENTITY.md"
+ln -sf "$AGENT_DIR/workspace/USER.md"     "$AGENT_DIR/.claude/claudeclaw/prompts/USER.md"
+ln -sf "$AGENT_DIR/workspace/SOUL.md"     "$AGENT_DIR/.claude/claudeclaw/prompts/SOUL.md"
+```
+Both paths now read the same files. Single source of truth.
+
+**Note:** ClaudeClaw also appends CLAUDE.md content. Since CLAUDE.md `@import`s
+the same workspace files, there may be duplication in the daemon path. This is
+acceptable — redundant identity is better than missing identity. If it causes
+token pressure, ClaudeClaw's `loadPrompts()` can be overridden via project-level
+prompt files at `.claude/claudeclaw/prompts/`.
+
 ## Operational Scripts (~300 lines total)
 
 | Script | Purpose | Lines (est.) |
 |---|---|---|
 | `setup.sh` | Create new agent from templates | 30 |
 | `uninstall.sh` | Remove agent | 10 |
-| `auto-retain.sh` | Stop hook: extract + retain from session transcript | 40 |
+| `auto-retain.sh` | Stop hook: LLM extraction + Hindsight retain (hybrid) | 50 |
 | `check-memory-size.sh` | PreToolUse hook: enforce MEMORY.md 50-line cap | 15 |
 | `health-check.sh` | System cron: verify Hindsight + ClaudeClaw alive | 20 |
 | `export-agent.sh` | Bundle agent + Hindsight data for migration | 40 |
@@ -596,20 +652,26 @@ with `scripts/import-agent.sh`. Agents are organizationally independent.**
 
 **Goal:** Advanced memory running and accessible via MCP.
 
-1. Start Hindsight:
+1. Start Hindsight (one container per agent):
    ```bash
+   AGENT_NAME="nova"
+   API_PORT=8888
+   UI_PORT=9999
+
    # With OpenAI embeddings (recommended for quality):
    export OPENAI_API_KEY=sk-xxx
-   docker run --rm -d --name hindsight -p 8888:8888 -p 9999:9999 \
+   docker run --rm -d --name "hindsight-$AGENT_NAME" \
+     -p $API_PORT:8888 -p $UI_PORT:9999 \
      -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
-     -v $HOME/.hindsight:/home/hindsight/.pg0 \
+     -v "$HOME/.hindsight-$AGENT_NAME:/home/hindsight/.pg0" \
      ghcr.io/vectorize-io/hindsight:latest
 
    # Or fully local with Ollama (no API key):
-   docker run --rm -d --name hindsight -p 8888:8888 -p 9999:9999 \
+   docker run --rm -d --name "hindsight-$AGENT_NAME" \
+     -p $API_PORT:8888 -p $UI_PORT:9999 \
      -e HINDSIGHT_API_LLM_PROVIDER=ollama \
      -e HINDSIGHT_API_LLM_BASE_URL=http://host.docker.internal:11434 \
-     -v $HOME/.hindsight:/home/hindsight/.pg0 \
+     -v "$HOME/.hindsight-$AGENT_NAME:/home/hindsight/.pg0" \
      ghcr.io/vectorize-io/hindsight:latest
    ```
 
