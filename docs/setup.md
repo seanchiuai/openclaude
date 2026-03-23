@@ -4,8 +4,9 @@
 
 - **Docker** — for running Hindsight memory containers
 - **Claude Code CLI** — `claude` command available in PATH
-- **Ollama** (recommended) — local LLM for Hindsight entity resolution
-  - Install: https://ollama.ai
+- **Ollama** — local LLM for Hindsight entity resolution (no API keys needed)
+  - Install: `brew install ollama` or https://ollama.ai
+  - Start: `ollama serve`
   - Pull a model: `ollama pull llama3.2`
 - **ClaudeClaw** (optional) — for daemon mode and Telegram integration
   - `claude plugin marketplace add moazbuilds/claudeclaw`

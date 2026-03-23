@@ -32,8 +32,8 @@ create_mock_curl() {
   cat > "$TEST_DIR/bin/curl" << 'MOCK'
 #!/bin/bash
 echo "$@" >> "$HOME/curl.log"
-# If it's a GET query for memories, return a mock response
-if [[ "$*" == *"query="* ]]; then
+# If it's a POST to recall, return mock memories
+if [[ "$*" == *"recall"* ]]; then
   echo '{"memories":[{"content":"User discussed bash scripting"},{"content":"Decided to use bats for testing"}]}'
 fi
 exit 0

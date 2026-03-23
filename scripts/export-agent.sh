@@ -23,7 +23,7 @@ cp -a "$AGENT_DIR" "${TMPDIR}/agents/${AGENT_NAME}"
 # Attempt to dump Hindsight data from Docker
 CONTAINER="hindsight-${AGENT_NAME}"
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
-  if docker cp "${CONTAINER}:/app/data/" "${TMPDIR}/hindsight-data/" 2>/dev/null; then
+  if docker cp "${CONTAINER}:/home/hindsight/.pg0/" "${TMPDIR}/hindsight-data/" 2>/dev/null; then
     echo "Included Hindsight data in export" >&2
   else
     echo "Warning: Could not copy Hindsight data, continuing without it" >&2

@@ -39,7 +39,7 @@ cp -a "${TMPDIR}/agents/${AGENT_NAME}" "$AGENT_DIR"
 CONTAINER="hindsight-${AGENT_NAME}"
 if [[ -d "${TMPDIR}/hindsight-data" ]]; then
   if docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    if docker cp "${TMPDIR}/hindsight-data/" "${CONTAINER}:/app/data/" 2>/dev/null; then
+    if docker cp "${TMPDIR}/hindsight-data/" "${CONTAINER}:/home/hindsight/.pg0/" 2>/dev/null; then
       echo "Restored Hindsight data to ${CONTAINER}" >&2
     else
       echo "Warning: Could not restore Hindsight data to container" >&2

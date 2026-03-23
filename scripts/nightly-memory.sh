@@ -147,7 +147,7 @@ $CONTENT"
           fi
 
           curl -sf -X POST \
-            "$HINDSIGHT_BASE/v1/default/banks/$AGENT_NAME/memories" \
+            "$HINDSIGHT_BASE/v1/default/banks/$AGENT_NAME/memories/retain" \
             -H "Content-Type: application/json" \
             -d "{\"items\":[{\"content\":$ESCAPED}]}" \
             >> "$LOG_FILE" 2>&1 || log "Failed to POST fact to Hindsight"
@@ -173,7 +173,9 @@ else
     log "claude CLI not found — skipping daily log generation"
   else
     # Query Hindsight for today's memories
-    MEMORIES=$(curl -sf "$HINDSIGHT_BASE/v1/default/banks/$AGENT_NAME/memories?query=events+on+$TODAY&limit=50" 2>/dev/null) || MEMORIES=""
+    MEMORIES=$(curl -sf -X POST "$HINDSIGHT_BASE/v1/default/banks/$AGENT_NAME/memories/recall" \
+      -H "Content-Type: application/json" \
+      -d "{\"query\":\"events on $TODAY\",\"limit\":50}" 2>/dev/null) || MEMORIES=""
 
     if [[ -z "$MEMORIES" ]]; then
       log "No memories returned from Hindsight for $TODAY — skipping daily log"

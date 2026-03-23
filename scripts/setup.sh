@@ -43,14 +43,26 @@ sed -i '' "s|__HINDSIGHT_PORT__|$HINDSIGHT_PORT|g" "$AGENT_DIR/.claude/settings.
 
 # Start Hindsight Docker container
 echo "Starting Hindsight container..."
+HINDSIGHT_IMAGE="ghcr.io/vectorize-io/hindsight:latest"
+
+# Default to Ollama for entity resolution (fully local, no API keys)
+HINDSIGHT_LLM_PROVIDER="${HINDSIGHT_LLM_PROVIDER:-ollama}"
+HINDSIGHT_LLM_API_KEY="${HINDSIGHT_LLM_API_KEY:-}"
+
 docker run -d \
   --name "hindsight-$AGENT_NAME" \
   --restart unless-stopped \
-  -p "$HINDSIGHT_PORT:8080" \
-  -v "$HOME/.hindsight-$AGENT_NAME:/app/data" \
-  hindsight:latest 2>/dev/null || {
+  -p "$HINDSIGHT_PORT:8888" \
+  -e "HINDSIGHT_API_LLM_PROVIDER=$HINDSIGHT_LLM_PROVIDER" \
+  -e "HINDSIGHT_API_LLM_API_KEY=$HINDSIGHT_LLM_API_KEY" \
+  -v "$HOME/.hindsight-$AGENT_NAME:/home/hindsight/.pg0" \
+  "$HINDSIGHT_IMAGE" 2>/dev/null || {
     echo "Warning: Could not start Hindsight container."
-    echo "Start it manually: docker run -d --name hindsight-$AGENT_NAME -p $HINDSIGHT_PORT:8080 -v ~/.hindsight-$AGENT_NAME:/app/data hindsight:latest"
+    echo "Start it manually:"
+    echo "  docker run -d --name hindsight-$AGENT_NAME -p $HINDSIGHT_PORT:8888 \\"
+    echo "    -e HINDSIGHT_API_LLM_PROVIDER=ollama \\"
+    echo "    -v ~/.hindsight-$AGENT_NAME:/home/hindsight/.pg0 \\"
+    echo "    $HINDSIGHT_IMAGE"
   }
 
 echo ""
