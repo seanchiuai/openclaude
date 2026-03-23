@@ -9,8 +9,6 @@ release.
 
 ## Native Feature Evaluation
 
-Before reaching for external tools, evaluate every built-in Claude Code feature:
-
 | Feature | What it does | Sufficient? | Why / Why not |
 |---|---|---|---|
 | **Skills** (`.claude/skills/`) | Reusable workflows with YAML frontmatter, auto-invocation, args | **Yes** | Replaces `src/skills/` entirely |
@@ -18,7 +16,7 @@ Before reaching for external tools, evaluate every built-in Claude Code feature:
 | **Hooks** (25+ events) | Shell/HTTP/prompt automation at lifecycle points | **Yes** | Replaces `src/router/` dispatch |
 | **Sessions** (`--session-id`/`--resume`) | Built-in persistence, transcripts, compaction | **Yes** | Replaces `src/engine/session-*` |
 | **CLAUDE.md** + rules | Persistent instructions, path-scoped rules, imports | **Yes** | Replaces `src/engine/system-prompt.ts` |
-| **Auto-memory** (`MEMORY.md`) | 200 lines auto-loaded, topic files on demand, cross-session | **No** | 200-line limit, no semantic search, no similarity matching. Memory is core to a personal assistant — use ClawMem for advanced retrieval |
+| **Auto-memory** (`MEMORY.md`) | 200 lines auto-loaded, topic files on demand, cross-session | **No** | 200-line limit, no semantic search, no entity resolution, no knowledge graph |
 | **/loop** | Recurring prompts at intervals | **No** | Dies on terminal close. 3-day expiry. Session-scoped only |
 | **Channels** (Telegram) | MCP-based message bridge | **No** | Research preview. Requires open terminal. No daemon mode. Bun-only |
 | **Desktop scheduled tasks** | Recurring tasks in desktop app | **No** | Requires desktop app open. Not unattended |
@@ -26,77 +24,120 @@ Before reaching for external tools, evaluate every built-in Claude Code feature:
 
 ### What native features CANNOT do
 
-Three things require external tooling:
+1. **Always-on daemon** — Claude Code has no headless mode.
+2. **Telegram without open terminal** — Channels require active session.
+3. **Durable cron with delivery** — No unattended scheduling.
+4. **Advanced memory** — No semantic search, knowledge graph, or entity resolution.
 
-1. **Always-on daemon** — Claude Code has no headless mode. `/loop` and scheduled
-   tasks die when the session/app closes.
-2. **Telegram without open terminal** — Channels require `--channels` flag in an
-   active session. No background message handling.
-3. **Durable cron with delivery** — No native way to run a prompt at 9am and send
-   the result to Telegram while unattended.
-
-### Why advanced memory matters
+## Memory System Evaluation
 
 Memory is the core differentiator for a personal AI assistant. Native auto-memory
-is a flat file with a 200-line auto-load limit and no search capability. For an
-assistant that accumulates knowledge over weeks and months, this falls short:
+(200-line `MEMORY.md`) has no search, no entity resolution, no temporal awareness.
+We evaluated every major AI memory system:
 
-- **No semantic search** — can't find "that conversation about deployment" by meaning
-- **No similarity matching** — can't surface related past decisions
-- **200-line ceiling** — topic files exist but Claude must guess which to load
-- **No temporal awareness** — can't prioritize recent vs. old memories
-- **No cross-reference** — can't link related concepts or trace decision chains
+### Comparison Matrix
 
-[ClawMem](https://github.com/yoloshii/ClawMem) provides all of this:
-- Hybrid search: BM25 + vector + graph traversal
-- Temporal decay (recent memories rank higher)
+| System | LongMemEval | Self-hosted | MCP Native | License | Local LLMs | Deploy | Cost |
+|---|---|---|---|---|---|---|---|
+| [**Hindsight**](https://github.com/vectorize-io/hindsight) | **91.4%** (Virginia Tech verified) | **Yes** (embedded PG) | **MCP-first** | **MIT** | **Ollama** | **1 Docker cmd** | **Free** |
+| [**Supermemory**](https://github.com/supermemoryai/supermemory) | ~99% (self-reported) | Partial (Cloudflare) | Plugin | Partial OSS | No | Cloud API | Free tier → paid |
+| [**Mem0**](https://github.com/mem0ai/mem0) | ~67% | Yes (3 containers) | OpenMemory | Apache 2.0 | Ollama | Docker compose | Free → $249/mo (graph) |
+| [**ClawMem**](https://github.com/yoloshii/ClawMem) | Not benchmarked | Yes | Yes (28 tools) | MIT (models: NC) | node-llama-cpp | Manual (Bun) | Free |
+| [**Letta**](https://github.com/letta-ai/letta) | N/A | Yes | No MCP | Apache 2.0 | Yes | Docker | Free |
+| [**mcp-memory-service**](https://github.com/doobidoo/mcp-memory-service) | Not benchmarked | Yes | MCP | MIT | Ollama | Docker | Free |
+
+### Detailed Assessment
+
+**[Supermemory](https://supermemory.ai/)** — Best claimed benchmarks (~99% LongMemEval)
+- Custom vector graph engine with ontology-aware edges
+- Knowledge updates, merges, contradictions — never just appends
+- #1 on LongMemEval, LoCoMo, and ConvoMem
+- **Disqualified:** Core engine is proprietary/cloud-dependent. Self-hosting
+  requires enterprise agreement. No local LLM support. Every request goes through
+  their servers (latency + token burn). Not suitable for local-first personal assistant.
+
+**[Mem0](https://mem0.ai/)** — Largest ecosystem (41k stars, $24M YC-backed)
+- Two-phase pipeline: extraction + update (ADD/UPDATE/DELETE/NOOP)
+- Graph-enhanced variant (Mem0ᵍ) for multi-session relationships
+- Self-hosted: Docker with FastAPI + PostgreSQL/pgvector + Neo4j (3 containers)
+- SOC 2 & HIPAA compliant, 24+ vector DBs supported
+- **Downsides:** Graph memory gated behind $249/mo in cloud. Self-hosted needs 3
+  containers + Neo4j (heavy for personal use). Lower benchmark scores (67% vs 91%).
+  Steep pricing jump ($19 → $249) for best features.
+
+**[Hindsight](https://hindsight.vectorize.io/)** — Best independently verified performance
+- Biomimetic memory model: World facts, Experiences, Mental models
+- 4 parallel retrieval strategies: semantic + BM25 + graph + temporal
 - Cross-encoder reranking for precision
-- Decision extraction from session transcripts
-- Handoff generation (session continuity across restarts)
-- 28 MCP tools for granular retrieval
-- Hooks: auto-inject context on every prompt, capture decisions on stop
-- Local embedding models — no API key required
+- Entity resolution ("Alice" = "my coworker Alice")
+- 91.4% LongMemEval (verified by Virginia Tech Sanghani Center)
+- MIT license, no feature gating
+- Single Docker command, embedded PostgreSQL (no external deps)
+- Ollama support for fully local operation
+- MCP-first design — native integration with Claude Code
+- 3.8k stars, growing rapidly, Fortune 500 production deployments
+- **Winner for OpenClaude.**
 
-## Landscape: External Tools Needed
+**[ClawMem](https://github.com/yoloshii/ClawMem)** — Claude Code native
+- Designed specifically for Claude Code and OpenClaw
+- Dual mode: hooks (~90% of retrieval) + MCP (~10%)
+- 28 MCP tools, decision extraction, handoff generation
+- Local embeddings via node-llama-cpp
+- **Downsides:** Not benchmarked against standard tests. Bun-only.
+  Smaller community. SOTA reranker models under non-commercial license.
+  Less mature than Hindsight or Mem0.
 
-| Project | What we use it for | Why |
-|---|---|---|
-| [**ClaudeClaw**](https://github.com/moazbuilds/claudeclaw) | Daemon + Telegram + cron + heartbeat | Headless daemon on Pro subscription |
-| [**ClawMem**](https://github.com/yoloshii/ClawMem) | Advanced memory with hybrid RAG | Semantic search, temporal decay, decision extraction |
+**[Letta](https://www.letta.com/)** — Full agent runtime
+- OS-inspired memory tiers (core → conversational → archival)
+- Agents actively manage their own memory
+- **Disqualified:** It's a complete agent runtime, not a memory layer.
+  Would conflict with Claude Code as the agent. Overkill.
 
-Two external dependencies. Both install in minutes.
+### Why Hindsight Wins
 
-### Why not claude-code-telegram?
+| Factor | Hindsight | Mem0 (self-hosted) | Supermemory | ClawMem |
+|---|---|---|---|---|
+| Benchmark (LongMemEval) | **91.4%** verified | 67% | ~99% claimed | Unknown |
+| License | **MIT** | Apache 2.0 | Partial OSS | MIT (models: NC) |
+| Self-hosted complexity | **1 Docker command** | 3 containers + Neo4j | Enterprise only | Manual Bun setup |
+| Local LLMs | **Ollama** | Ollama | No | node-llama-cpp |
+| MCP integration | **MCP-first** | OpenMemory MCP | Plugin | MCP + hooks |
+| Knowledge graph | **Entity resolution + graph** | Neo4j (self-hosted) | Ontology-aware | Semantic edges |
+| Temporal awareness | **Time-range filtering** | Mem0ᵍ temporal | Limited | Temporal decay |
+| Memory model | **Biomimetic (3 types)** | Flat facts | User profiles | Flat + graph |
+| External dependencies | **Embedded PostgreSQL** | PG + Neo4j + API | Cloudflare | SQLite + Bun |
+| Feature gating | **None** | Graph = $249/mo cloud | Enterprise | SOTA models = NC |
 
-[claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) (1.1k
-stars) is more mature but is a Python app with its own session management, auth
-layer, and tool monitoring. It duplicates what Claude Code already does natively.
-ClaudeClaw is a plugin that extends Claude Code rather than wrapping it.
+Hindsight provides the best independently verified retrieval accuracy, simplest
+deployment, most permissive license, and richest memory model — with zero cost
+and zero cloud dependency.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                   Claude Code + ClaudeClaw + ClawMem                  │
+│                  Claude Code + ClaudeClaw + Hindsight                 │
 │                                                                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │  ClaudeClaw   │  │   ClawMem    │  │  Native Claude Code       │  │
-│  │  (plugin)     │  │   (MCP)      │  │                          │  │
-│  │              │  │              │  │  - Skills                 │  │
-│  │  - Daemon    │  │  - BM25      │  │  - Agents                │  │
-│  │  - Telegram  │  │  - Vector    │  │  - Hooks                 │  │
-│  │  - Cron      │  │  - Graph     │  │  - Rules                 │  │
-│  │  - Heartbeat │  │  - Reranking │  │  - Sessions              │  │
-│  │  - Dashboard │  │  - Hooks     │  │  - CLAUDE.md             │  │
-│  │              │  │  - 28 tools  │  │                          │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
+│  ┌──────────────┐  ┌───────────────┐  ┌─────────────────────────┐  │
+│  │  ClaudeClaw   │  │  Hindsight    │  │  Native Claude Code      │  │
+│  │  (plugin)     │  │  (MCP server) │  │                         │  │
+│  │              │  │               │  │  - Skills                │  │
+│  │  - Daemon    │  │  - Semantic   │  │  - Agents               │  │
+│  │  - Telegram  │  │  - BM25      │  │  - Hooks                │  │
+│  │  - Cron      │  │  - Graph     │  │  - Rules                │  │
+│  │  - Heartbeat │  │  - Temporal  │  │  - Sessions             │  │
+│  │  - Dashboard │  │  - Reranking │  │  - CLAUDE.md            │  │
+│  │              │  │  - Entities  │  │                         │  │
+│  │              │  │  - Mental    │  │                         │  │
+│  │              │  │    models    │  │                         │  │
+│  └──────────────┘  └───────────────┘  └─────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  .claude/  (OpenClaude's contribution)                        │   │
 │  │                                                               │   │
 │  │    CLAUDE.md          — Agent identity + behavior rules       │   │
 │  │    settings.json      — Permissions + hooks                   │   │
-│  │    .mcp.json          — ClawMem server entry                  │   │
+│  │    .mcp.json          — Hindsight MCP server entry            │   │
 │  │                                                               │   │
 │  │    skills/                                                    │   │
 │  │      standup/SKILL.md     — Daily standup                     │   │
@@ -112,26 +153,39 @@ ClaudeClaw is a plugin that extends Claude Code rather than wrapping it.
 │  │      messaging.md     — Channel reply formatting              │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
+
+                    ┌──────────────────┐
+                    │  Hindsight       │
+                    │  Docker          │
+                    │  (background)    │
+                    │                  │
+                    │  - PostgreSQL    │
+                    │  - API :8888     │
+                    │  - UI :9999      │
+                    │  - Ollama (opt)  │
+                    └──────────────────┘
 ```
 
-### Component responsibilities
+### Component Responsibilities
 
 **ClaudeClaw** (plugin — daemon + channels + scheduling):
 - Background daemon (launchd/systemd)
-- Telegram adapter
+- Telegram adapter with streaming
 - Cron scheduler with timezone support
-- Heartbeat (periodic checklist review)
-- Web dashboard
+- Heartbeat (periodic checklist review + proactive action)
+- Web dashboard for monitoring
 
-**ClawMem** (MCP server — advanced memory):
-- Hybrid retrieval: BM25 + vector embeddings + graph traversal
-- Claude Code hooks: auto-inject context on every prompt, capture decisions on stop
-- Decision extraction from session transcripts
-- Handoff generation at session end (continuity across restarts)
-- Local embedding models (no API key needed)
-- Cross-encoder reranking for precision
-- Temporal decay (recent memories rank higher)
-- 28 MCP tools for granular agent-initiated retrieval
+**Hindsight** (MCP server — advanced memory):
+- **Retain**: store facts, experiences, and mental models
+- **Recall**: 4 parallel strategies (semantic + BM25 + graph + temporal) + reranking
+- **Reflect**: generate new insights from existing memories
+- Entity resolution (deduplicate people, concepts, decisions)
+- Knowledge graph with entity/temporal/causal links
+- Biomimetic memory types: world facts, experiences, learned mental models
+- Per-user isolation with custom metadata
+- MCP-first: native integration with Claude Code
+- Runs as Docker container with embedded PostgreSQL
+- Optional: Ollama for fully local operation (no API key)
 
 **Native Claude Code** (zero dependencies):
 - Skills — reusable workflows
@@ -142,7 +196,7 @@ ClaudeClaw is a plugin that extends Claude Code rather than wrapping it.
 
 **OpenClaude** (config files only):
 - `.claude/CLAUDE.md` — agent identity
-- `.claude/.mcp.json` — ClawMem server entry
+- `.claude/.mcp.json` — Hindsight MCP server entry
 - `.claude/skills/` — custom workflows
 - `.claude/agents/` — restricted contexts
 - `.claude/rules/` — safety + formatting
@@ -156,7 +210,7 @@ openclaude/
   .claude/
     CLAUDE.md              # Agent identity, behavior, safety
     settings.json          # Permissions, hooks
-    .mcp.json              # ClawMem server entry
+    .mcp.json              # Hindsight MCP server entry
 
     skills/
       standup/SKILL.md     # Review git commits, summarize
@@ -172,7 +226,7 @@ openclaude/
       messaging.md         # Telegram formatting
 
   scripts/
-    setup.sh               # Install ClaudeClaw + ClawMem + configure
+    setup.sh               # Install ClaudeClaw + Hindsight + configure
 
   docs/
     setup.md               # Manual setup guide
@@ -183,9 +237,53 @@ openclaude/
 
 ## Implementation Plan
 
-### Phase 1: ClaudeClaw + Telegram (Day 1, morning)
+### Phase 1: Hindsight Memory System (Day 1, morning)
 
-**Goal:** Telegram bot running via daemon.
+**Goal:** Advanced memory running and accessible via MCP.
+
+1. Start Hindsight:
+   ```bash
+   # With OpenAI embeddings (recommended for quality):
+   export OPENAI_API_KEY=sk-xxx
+   docker run --rm -d --name hindsight -p 8888:8888 -p 9999:9999 \
+     -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
+     -v $HOME/.hindsight:/home/hindsight/.pg0 \
+     ghcr.io/vectorize-io/hindsight:latest
+
+   # Or fully local with Ollama (no API key):
+   docker run --rm -d --name hindsight -p 8888:8888 -p 9999:9999 \
+     -e HINDSIGHT_API_LLM_PROVIDER=ollama \
+     -e HINDSIGHT_API_LLM_BASE_URL=http://host.docker.internal:11434 \
+     -v $HOME/.hindsight:/home/hindsight/.pg0 \
+     ghcr.io/vectorize-io/hindsight:latest
+   ```
+
+2. Verify API is running: `curl http://localhost:8888/health`
+
+3. Add to `.claude/.mcp.json`:
+   ```json
+   {
+     "mcpServers": {
+       "hindsight": {
+         "type": "http",
+         "url": "http://localhost:8888/mcp"
+       }
+     }
+   }
+   ```
+
+4. Test in Claude Code session:
+   - Retain: "Remember that our deployment uses blue-green strategy on AWS ECS"
+   - Recall: "What do you know about our deployment?"
+   - Reflect: "What patterns do you see in recent decisions?"
+
+5. Verify Hindsight UI at `http://localhost:9999` — browse stored memories
+
+**Validation:** Retain → recall round-trip works; entity resolution links related facts.
+
+### Phase 2: ClaudeClaw + Telegram (Day 1, afternoon)
+
+**Goal:** Telegram bot running via daemon with memory.
 
 1. Install ClaudeClaw:
    ```bash
@@ -197,29 +295,9 @@ openclaude/
    - Heartbeat interval (30 min)
    - Security level (level 2 — edit access)
 3. Start: `/claudeclaw:start`
-4. Test: Telegram message → Claude Code response
+4. Test: Telegram message → response that uses Hindsight memory
 
-**Validation:** Round-trip Telegram conversation working.
-
-### Phase 2: ClawMem Memory System (Day 1, afternoon)
-
-**Goal:** Advanced vector memory auto-injected into every session.
-
-1. Install ClawMem:
-   ```bash
-   npm install -g clawmem
-   clawmem bootstrap ~/.openclaude/memory --name openclaude
-   clawmem setup hooks    # SessionStart, UserPromptSubmit, Stop, PreCompact
-   clawmem setup mcp      # 28 tools for agent-initiated retrieval
-   ```
-2. Configure embedding provider:
-   - Local (no API key): node-llama-cpp with EmbeddingGemma-300M (~400MB)
-   - Or cloud: OpenAI text-embedding-3-small (if API key available)
-3. Add `.mcp.json` entry for ClawMem server
-4. Test: ask Claude to remember something → verify it persists
-5. Test: semantic search — ask about a topic from a previous session
-
-**Validation:** Memory auto-injects on prompt; semantic search returns relevant results.
+**Validation:** Telegram conversation with memory-augmented responses.
 
 ### Phase 3: Agent Configuration (Day 2, morning)
 
@@ -227,11 +305,11 @@ openclaude/
 
 1. Write `.claude/CLAUDE.md`:
    - Agent name and identity
-   - Core behavior rules (concise, no fluff)
-   - Telegram response formatting (markdown, length limits)
-   - Tool preferences
+   - Core behavior rules
+   - Telegram response formatting
+   - Instruction to use Hindsight for memory (retain important facts, recall context)
 
-2. Create skills (only what you'll actually use):
+2. Create skills:
    - `standup/SKILL.md` — git log summary
    - `review/SKILL.md` — code review checklist
 
@@ -245,8 +323,6 @@ openclaude/
 
 5. Create `settings.json` with permissions
 
-6. Test skills and agents in a normal `claude` session
-
 **Validation:** `/standup` works, agents have correct tool restrictions.
 
 ### Phase 4: Cron + Heartbeat (Day 2, afternoon)
@@ -255,46 +331,49 @@ openclaude/
 
 1. Configure ClaudeClaw heartbeat:
    - Active hours: 8am–10pm
-   - Checklist: recent activity, pending tasks
+   - Checklist: review recent activity, pending tasks
    - Target: Telegram chat
 
 2. Add cron jobs:
    - Daily standup at 9am
    - Any other recurring tasks
 
-3. Test: wait for tick → verify Telegram delivery
+3. Test: heartbeat tick → Telegram delivery
 
 **Validation:** Cron fires and delivers without intervention.
 
 ### Phase 5: Setup Script + Docs (Day 3)
 
-**Goal:** Reproducible setup.
+**Goal:** Reproducible one-command setup.
 
 1. Write `scripts/setup.sh`:
    ```bash
    #!/bin/bash
    set -e
 
+   # Hindsight — advanced memory (Docker must be running)
+   echo "Starting Hindsight memory system..."
+   docker run --rm -d --name hindsight -p 8888:8888 -p 9999:9999 \
+     -e HINDSIGHT_API_LLM_PROVIDER=${HINDSIGHT_LLM_PROVIDER:-ollama} \
+     -e HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_LLM_URL:-http://host.docker.internal:11434} \
+     -v $HOME/.hindsight:/home/hindsight/.pg0 \
+     ghcr.io/vectorize-io/hindsight:latest
+
    # ClaudeClaw — daemon + Telegram + cron
    claude plugin marketplace add moazbuilds/claudeclaw
    claude plugin install claudeclaw
 
-   # ClawMem — advanced memory
-   npm install -g clawmem
-   clawmem bootstrap ~/.openclaude/memory --name openclaude
-   clawmem setup hooks
-   clawmem setup mcp
-
-   echo "Done. Run /claudeclaw:start in Claude Code to begin."
+   echo "Done. Configure Telegram token, then run /claudeclaw:start"
+   echo "Memory UI: http://localhost:9999"
    ```
 
 2. Write `docs/setup.md`: prerequisites, step-by-step, troubleshooting
 
-**Validation:** Fresh machine → working bot in < 10 minutes.
+**Validation:** Fresh machine → working bot with memory in < 15 minutes.
 
 ## What Gets Deleted from v1
 
-**All of `src/`** — 35k lines, 97 test files. Every module:
+**All of `src/`** — 35k lines, 97 test files:
 
 - `src/engine/` — spawn, pool, sessions, system-prompt, subagents
 - `src/gateway/` — HTTP server, auth, rate limiting, launchd/systemd
@@ -312,14 +391,13 @@ openclaude/
 
 ## Upgrade Path
 
-If needs grow beyond what's built here:
-
 | Need | Solution | Effort |
 |---|---|---|
 | Slack channel | Wait for ClaudeClaw/Channels support, or write ~300-line bridge | 0 or 1 day |
 | Discord | Already in ClaudeClaw — just configure | 10 minutes |
-| Proactive messaging from code | ClaudeClaw exposes `send_message` | Config only |
-| Native Channels (when stable) | Replace ClaudeClaw's Telegram with official plugin | Config only |
+| Proactive messaging | ClaudeClaw exposes `send_message` | Config only |
+| Native Channels (when stable) | Replace ClaudeClaw Telegram with official plugin | Config only |
+| Switch memory provider | Swap Hindsight MCP entry for Mem0/Supermemory/ClawMem | Config only |
 
 ## Summary
 
@@ -328,10 +406,11 @@ If needs grow beyond what's built here:
 | **Lines of code** | 35,000 | 0 |
 | **Test files** | 97 | 0 |
 | **Production deps** | 15 | 0 |
-| **External tools** | 0 (all custom) | 2 (ClaudeClaw + ClawMem) |
-| **Setup time** | 30+ min | < 10 min |
+| **External tools** | 0 (all custom) | 2 (ClaudeClaw + Hindsight) |
+| **Setup time** | 30+ min | < 15 min |
 | **Maintenance** | High | Near-zero |
-| **Memory** | Custom vector search (6 providers) | ClawMem (BM25 + vector + graph + reranking) |
+| **Memory benchmark** | Not tested | 91.4% LongMemEval |
+| **Memory features** | Vector + BM25 (custom) | Semantic + BM25 + graph + temporal + reranking + entity resolution + mental models |
 | **Telegram** | Custom grammY adapter | ClaudeClaw plugin |
 | **Cron** | Custom croner scheduler | ClaudeClaw plugin |
 | **Skills** | Custom loader | Native `.claude/skills/` |
