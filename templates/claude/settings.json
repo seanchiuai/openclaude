@@ -1,15 +1,25 @@
 {
   "hooks": {
-    "Stop": [
+    "SessionEnd": [
       {
         "matcher": "",
-        "command": "__OPENCLAUDE_DIR__/scripts/auto-retain.sh __AGENT_DIR__ __AGENT_NAME__ __HINDSIGHT_PORT__"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__OPENCLAUDE_DIR__/scripts/log-session.sh __AGENT_DIR__"
+          }
+        ]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit",
-        "command": "__OPENCLAUDE_DIR__/scripts/check-memory-size.sh $TOOL_INPUT"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__OPENCLAUDE_DIR__/scripts/check-memory-size.sh $TOOL_INPUT"
+          }
+        ]
       }
     ]
   }
