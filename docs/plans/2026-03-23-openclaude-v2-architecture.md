@@ -16,6 +16,7 @@ release.
 | **Hooks** (25+ events) | Shell/HTTP/prompt automation at lifecycle points | **Yes** | Replaces `src/router/` dispatch |
 | **Sessions** (`--session-id`/`--resume`) | Built-in persistence, transcripts, compaction | **Yes** | Replaces `src/engine/session-*` |
 | **CLAUDE.md** + rules | Persistent instructions, path-scoped rules, imports | **Yes** | Replaces `src/engine/system-prompt.ts` |
+| **`@import`** in CLAUDE.md | Pull external files into context at session start | **Yes** | Enables layered workspace files (tested, works) |
 | **Auto-memory** (`MEMORY.md`) | 200 lines auto-loaded, topic files on demand, cross-session | **No** | 200-line limit, no semantic search, no entity resolution, no knowledge graph |
 | **/loop** | Recurring prompts at intervals | **No** | Dies on terminal close. 3-day expiry. Session-scoped only |
 | **Channels** (Telegram) | MCP-based message bridge | **No** | Research preview. Requires open terminal. No daemon mode. Bun-only |
@@ -28,40 +29,37 @@ release.
 2. **Telegram without open terminal** — Channels require active session.
 3. **Durable cron with delivery** — No unattended scheduling.
 4. **Advanced memory** — No semantic search, knowledge graph, or entity resolution.
-5. **General-purpose assistant** — Claude Code is project-scoped by design.
 
 ### The Project-Scoping Problem
 
 Claude Code is built for **project-specific sessions**:
 - `.claude/` config loads relative to the working directory
 - Sessions live in `~/.claude/projects/<encoded-cwd>/`
-- CLAUDE.md, skills, agents, rules are all tied to one repo
+- CLAUDE.md, skills, agents, rules are all tied to one CWD
 - Auto-memory (MEMORY.md) is per-project
 
 OpenClaude is a **general-purpose personal assistant**:
 - Not tied to any one repo
 - Should help with coding across ANY project
 - Should handle non-coding tasks (research, reminders, general questions)
-- Should manage files anywhere on the system
+- Must support multiple independent agents on one machine
 
-**Solution: User-level config.** Claude Code supports two scopes:
+### Solution: Self-Contained Agent Directories
 
-| Scope | Location | When it loads |
-|---|---|---|
-| **User** | `~/.claude/` | Always, regardless of CWD |
-| **Project** | `.claude/` in repo | Only when running from that directory |
+Claude Code loads `.claude/` config from the **current working directory**. By
+giving each agent its own directory with its own `.claude/`, we turn Claude Code's
+project-scoping into agent-scoping. ClaudeClaw sets CWD to the agent's directory
+when spawning a session.
 
-OpenClaude installs everything at **user level** (`~/.claude/`), so identity,
-skills, agents, memory, and rules follow the assistant everywhere. When the
-daemon spawns a session to work on a specific project, it sets CWD to that
-project's directory — picking up project-specific config on top of OpenClaude's
-global identity.
+OpenClaw's workspace pattern (IDENTITY.md, SOUL.md, AGENTS.md, USER.md, TOOLS.md)
+provides layered identity. Claude Code's `@import` in CLAUDE.md loads these files
+natively — no custom system-prompt injection needed.
 
-**Working directory strategy for the daemon:**
-- General questions → CWD = `$HOME` (no project context needed)
-- Project-specific tasks → CWD = project directory (user says "work on my-webapp")
-- The assistant can `cd` or use absolute paths for cross-project work
-- Hindsight memory is CWD-independent (HTTP MCP server, always available)
+**Verified by experiment:**
+- `@import` with relative paths from CLAUDE.md ✓
+- User-level `~/.claude/` + project-level `.claude/` layer together ✓
+- User-level skills available from any CWD ✓
+- Works from any working directory ✓
 
 ## Memory System Evaluation
 
@@ -150,41 +148,53 @@ and zero cloud dependency.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                  Claude Code + ClaudeClaw + Hindsight                 │
+│                  Claude Code + ClaudeClaw + Hindsight               │
 │                                                                     │
 │  ┌──────────────┐  ┌───────────────┐  ┌─────────────────────────┐  │
-│  │  ClaudeClaw   │  │  Hindsight    │  │  Native Claude Code      │  │
+│  │  ClaudeClaw   │  │  Hindsight    │  │  Native Claude Code     │  │
 │  │  (plugin)     │  │  (MCP server) │  │                         │  │
-│  │              │  │               │  │  - Skills                │  │
+│  │              │  │               │  │  - Skills               │  │
 │  │  - Daemon    │  │  - Semantic   │  │  - Agents               │  │
 │  │  - Telegram  │  │  - BM25      │  │  - Hooks                │  │
 │  │  - Cron      │  │  - Graph     │  │  - Rules                │  │
 │  │  - Heartbeat │  │  - Temporal  │  │  - Sessions             │  │
-│  │  - Dashboard │  │  - Reranking │  │  - CLAUDE.md            │  │
+│  │  - Dashboard │  │  - Reranking │  │  - CLAUDE.md @import    │  │
 │  │              │  │  - Entities  │  │                         │  │
 │  │              │  │  - Mental    │  │                         │  │
 │  │              │  │    models    │  │                         │  │
 │  └──────────────┘  └───────────────┘  └─────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  ~/.claude/  (user-level — loads in EVERY session, any CWD)   │   │
+│  │  ~/.openclaude/agents/<name>/  (one per agent, self-contained) │  │
 │  │                                                               │   │
-│  │    CLAUDE.md          — Agent identity + behavior rules       │   │
-│  │    settings.json      — Permissions + hooks                   │   │
-│  │    .mcp.json          — Hindsight MCP server entry            │   │
+│  │    .claude/                                                   │   │
+│  │      CLAUDE.md        — @imports workspace identity files     │   │
+│  │      .mcp.json        — Hindsight MCP server entry            │   │
+│  │      settings.json    — Permissions + hooks                   │   │
+│  │      skills/          — Agent's skills                        │   │
+│  │      agents/          — Agent's subagents                     │   │
+│  │      rules/           — Agent's rules                         │   │
 │  │                                                               │   │
-│  │    skills/            — Personal workflows                    │   │
-│  │    agents/            — Restricted subagents                  │   │
-│  │    rules/             — Safety + formatting                   │   │
+│  │    workspace/         — OpenClaw-style layered identity       │   │
+│  │      IDENTITY.md      — Name, creature, vibe, emoji           │   │
+│  │      SOUL.md          — Persona, tone, values                 │   │
+│  │      AGENTS.md        — Operating rules, memory policy        │   │
+│  │      USER.md          — Human's preferences                   │   │
+│  │      TOOLS.md         — Local environment                     │   │
+│  │      HEARTBEAT.md     — Periodic checklist                    │   │
+│  │      MEMORY.md        — Curated long-term memory              │   │
+│  │      memory/          — Daily session logs                    │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  CWD-dependent context (optional, per-project)                │   │
-│  │                                                               │   │
-│  │    General questions  → CWD = $HOME (no project context)     │   │
-│  │    "Work on my-webapp" → CWD = ~/projects/my-webapp          │   │
-│  │    Project .claude/   → layered on top of ~/.claude/         │   │
-│  └──────────────────────────────────────────────────────────────┘   │
+│  ClaudeClaw spawns Claude Code with:                               │
+│    CWD = ~/.openclaude/agents/<name>/                              │
+│    → .claude/ loads identity, skills, memory, rules                │
+│    → Agent works on any project via absolute paths or cd           │
+│                                                                     │
+│  Multiple agents = multiple directories:                           │
+│    ~/.openclaude/agents/nova/     (personal assistant)             │
+│    ~/.openclaude/agents/atlas/    (work assistant)                 │
+│    ~/.openclaude/agents/sentinel/ (monitoring bot)                 │
 └─────────────────────────────────────────────────────────────────────┘
 
                     ┌──────────────────┐
@@ -207,6 +217,7 @@ and zero cloud dependency.
 - Cron scheduler with timezone support
 - Heartbeat (periodic checklist review + proactive action)
 - Web dashboard for monitoring
+- Routes messages to the correct agent directory (CWD selection)
 
 **Hindsight** (MCP server — advanced memory):
 - **Retain**: store facts, experiences, and mental models
@@ -215,7 +226,7 @@ and zero cloud dependency.
 - Entity resolution (deduplicate people, concepts, decisions)
 - Knowledge graph with entity/temporal/causal links
 - Biomimetic memory types: world facts, experiences, learned mental models
-- Per-user isolation with custom metadata
+- Per-user isolation with custom metadata (can isolate per agent)
 - MCP-first: native integration with Claude Code
 - Runs as Docker container with embedded PostgreSQL
 - Optional: Ollama for fully local operation (no API key)
@@ -225,77 +236,164 @@ and zero cloud dependency.
 - Agents — restricted subagents
 - Hooks — lifecycle automation
 - Sessions — persistence and compaction
-- CLAUDE.md + rules — identity and constraints
+- CLAUDE.md + `@import` — loads workspace identity files
+- Rules — path-scoped instructions
 
-**OpenClaude** (config files installed to `~/.claude/`, not project-scoped):
-- `~/.claude/CLAUDE.md` — agent identity (loads in every session, any CWD)
-- `~/.claude/.mcp.json` — Hindsight MCP server (memory available everywhere)
-- `~/.claude/skills/` — personal workflows (standup, research, etc.)
-- `~/.claude/agents/` — restricted subagents
-- `~/.claude/rules/` — safety + formatting
-- `~/.claude/settings.json` — global permissions + hooks
-- `scripts/setup.sh` — one-command install
+**OpenClaude** (config + workspace, zero runtime code):
+- Source repo provides default templates for workspace files + Claude Code config
+- `scripts/setup.sh` creates agent directories under `~/.openclaude/agents/`
+- Each agent is fully self-contained: `.claude/` + `workspace/`
+- Agents are independent — no shared state, no coupling
+
+### How @import Bridges the Two Systems
+
+CLAUDE.md in each agent's `.claude/` is a thin bridge file:
+
+```markdown
+# ~/.openclaude/agents/nova/.claude/CLAUDE.md
+
+# OpenClaude Agent
+
+You are a general-purpose personal assistant. Your identity and operating
+rules are defined in your workspace files.
+
+@../workspace/IDENTITY.md
+@../workspace/SOUL.md
+@../workspace/AGENTS.md
+@../workspace/USER.md
+@../workspace/TOOLS.md
+```
+
+Claude Code reads CLAUDE.md → resolves `@import` paths relative to `.claude/` →
+inlines workspace files into context. The workspace files are the living
+documents that define the agent. CLAUDE.md itself rarely changes.
+
+### Workspace Files (from OpenClaw)
+
+| File | Purpose | Who edits | How often |
+|---|---|---|---|
+| **IDENTITY.md** | Agent name, creature type, vibe, emoji | User or agent (bootstrap) | Once, then rarely |
+| **SOUL.md** | Persona, tone, values, boundaries | User | Rarely |
+| **AGENTS.md** | Operating rules, memory policy, red lines, group chat etiquette | User | Occasionally |
+| **USER.md** | Human's name, timezone, preferences, context | Agent | Gradually over time |
+| **TOOLS.md** | Local environment: SSH hosts, devices, camera names, services | User | When environment changes |
+| **HEARTBEAT.md** | Periodic checklist for proactive check-ins | User | Occasionally |
+| **MEMORY.md** | Curated long-term memory (distilled insights) | Agent | Regularly |
+| **memory/YYYY-MM-DD.md** | Daily session logs ("write it down or forget it") | Agent | Daily |
+
+### Memory: Hybrid File + Semantic
+
+Two complementary memory systems:
+
+**File-based** (OpenClaw pattern — in workspace):
+- `MEMORY.md` — curated long-term memory, agent-maintained
+- `memory/YYYY-MM-DD.md` — daily session logs
+- Agent writes here during conversations ("memory is limited — write it to a file")
+- Survives session restarts, human-readable, git-trackable
+
+**Semantic** (Hindsight MCP — in Docker):
+- Entity resolution, knowledge graph, temporal retrieval
+- 4 parallel search strategies + cross-encoder reranking
+- Agent uses `retain` to store, `recall` to search, `reflect` to synthesize
+- Good for "find that thing from last week" across thousands of memories
+
+The agent uses files for discipline ("write it down") and Hindsight for recall
+("find what I need"). They complement — files are the source of truth, Hindsight
+makes them searchable.
 
 ## Project Structure
 
 **Source repo** (what you clone/maintain):
 ```
 openclaude/
-  config/
-    CLAUDE.md              # Agent identity, behavior, safety
-    settings.json          # Permissions, hooks
-    .mcp.json              # Hindsight MCP server entry
+  templates/
+    workspace/
+      IDENTITY.md            # Default agent identity template
+      SOUL.md                # Default persona template
+      AGENTS.md              # Default operating rules template
+      USER.md                # Default user profile template
+      TOOLS.md               # Default environment template
+      HEARTBEAT.md           # Default heartbeat checklist
+      BOOTSTRAP.md           # First-run onboarding ritual
 
-    skills/
-      standup/SKILL.md     # Daily standup
-      review/SKILL.md      # Code review workflow
-      research/SKILL.md    # Deep research workflow
-      remind/SKILL.md      # Set reminders / manage tasks
+    claude/
+      CLAUDE.md              # Bridge file with @imports
+      .mcp.json              # Hindsight MCP server entry
+      settings.json          # Default permissions + hooks
 
-    agents/
-      cron-worker.md       # Read-only agent for scheduled tasks
-      researcher.md        # WebSearch + Read only
-      coder.md             # Full tool access, project-scoped
+      skills/
+        bootstrap/SKILL.md   # One-time onboarding conversation
+        standup/SKILL.md      # Daily git summary
+        research/SKILL.md     # Deep web + memory research
+        remind/SKILL.md       # Set reminders / manage tasks
 
-    rules/
-      safety.md            # Boundaries
-      messaging.md         # Telegram formatting
+      agents/
+        cron-worker.md        # Read-only for scheduled tasks
+        researcher.md         # WebSearch + Read only
+        coder.md              # Full tool access for project work
+
+      rules/
+        safety.md             # Hard boundaries
+        messaging.md          # Telegram reply formatting
 
   scripts/
-    setup.sh               # Install deps + copy config to ~/.claude/
-    uninstall.sh           # Clean up
+    setup.sh                  # Create agent from templates
+    uninstall.sh              # Remove agent
 
   docs/
-    setup.md               # Manual setup guide
-    plans/                 # Architecture docs
+    setup.md                  # Manual setup guide
+    plans/                    # Architecture docs
 ```
 
-**Installed location** (what actually runs):
+**Installed location** (per agent, fully self-contained):
 ```
-~/.claude/
-  CLAUDE.md                # ← copied from config/CLAUDE.md
-  settings.json            # ← copied from config/settings.json
-  .mcp.json                # ← copied from config/.mcp.json (Hindsight)
-
-  skills/
-    standup/SKILL.md       # ← copied from config/skills/
-    review/SKILL.md
-    research/SKILL.md
-    remind/SKILL.md
-
+~/.openclaude/
   agents/
-    cron-worker.md         # ← copied from config/agents/
-    researcher.md
-    coder.md
+    nova/                                   # One agent = one folder
+    │
+    ├── .claude/                            # Claude Code config (loaded via CWD)
+    │   ├── CLAUDE.md                       # Bridge: @imports workspace files
+    │   ├── .mcp.json                       # Hindsight MCP
+    │   ├── settings.json                   # Permissions, hooks
+    │   │
+    │   ├── skills/
+    │   │   ├── bootstrap/SKILL.md          # One-time onboarding
+    │   │   ├── standup/SKILL.md            # Daily standup
+    │   │   ├── research/SKILL.md           # Deep research
+    │   │   └── remind/SKILL.md             # Reminders
+    │   │
+    │   ├── agents/
+    │   │   ├── cron-worker.md              # Read-only subagent
+    │   │   ├── researcher.md               # Research subagent
+    │   │   └── coder.md                    # Coding subagent
+    │   │
+    │   └── rules/
+    │       ├── safety.md                   # Boundaries
+    │       └── messaging.md                # Telegram formatting
+    │
+    └── workspace/                          # Agent's "home" (living documents)
+        ├── IDENTITY.md                     # "I am Nova ✦"
+        ├── SOUL.md                         # Persona, tone, values
+        ├── AGENTS.md                       # Operating rules, memory policy
+        ├── USER.md                         # "Sean, PST, concise answers"
+        ├── TOOLS.md                        # SSH hosts, devices, services
+        ├── HEARTBEAT.md                    # Periodic checklist
+        ├── MEMORY.md                       # Curated long-term memory
+        └── memory/
+            ├── 2026-03-22.md               # Daily session log
+            └── 2026-03-23.md
 
-  rules/
-    safety.md              # ← copied from config/rules/
-    messaging.md
+    atlas/                                  # Second agent (same structure)
+    ├── .claude/
+    │   ├── CLAUDE.md                       # @imports atlas's workspace
+    │   └── ...
+    └── workspace/
+        ├── IDENTITY.md                     # "I am Atlas 🌍"
+        └── ...
 ```
 
-This means OpenClaude's identity, memory, skills, and rules load in **every
-Claude Code session on the machine** — whether spawned by ClaudeClaw from
-Telegram, opened interactively in a terminal, or triggered by a cron job.
+**One agent = one folder. Clone it, back it up, delete it, sync it. No stray
+config elsewhere. Agents are independent — no shared state, no coupling.**
 
 **Custom runtime code: 0 lines.**
 
@@ -324,86 +422,118 @@ Telegram, opened interactively in a terminal, or triggered by a cron job.
 
 2. Verify API is running: `curl http://localhost:8888/health`
 
-3. Add to `~/.claude/.mcp.json` (user-level, available everywhere):
-   ```json
-   {
-     "mcpServers": {
-       "hindsight": {
-         "type": "http",
-         "url": "http://localhost:8888/mcp"
-       }
-     }
-   }
-   ```
-
-4. Test in Claude Code session:
+3. Test in Claude Code session:
    - Retain: "Remember that our deployment uses blue-green strategy on AWS ECS"
    - Recall: "What do you know about our deployment?"
    - Reflect: "What patterns do you see in recent decisions?"
 
-5. Verify Hindsight UI at `http://localhost:9999` — browse stored memories
+4. Verify Hindsight UI at `http://localhost:9999` — browse stored memories
 
 **Validation:** Retain → recall round-trip works; entity resolution links related facts.
 
-### Phase 2: ClaudeClaw + Telegram (Day 1, afternoon)
+### Phase 2: Agent Directory + Templates (Day 1, afternoon)
 
-**Goal:** Telegram bot running via daemon with memory.
+**Goal:** Create first agent with OpenClaw-style workspace + Claude Code config.
+
+1. Write `scripts/setup.sh`:
+   ```bash
+   #!/bin/bash
+   set -e
+   AGENT_NAME="${1:-nova}"
+   SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+   AGENT_DIR="$HOME/.openclaude/agents/$AGENT_NAME"
+
+   if [ -d "$AGENT_DIR" ]; then
+     echo "Agent '$AGENT_NAME' already exists at $AGENT_DIR"
+     exit 1
+   fi
+
+   echo "Creating agent '$AGENT_NAME'..."
+   mkdir -p "$AGENT_DIR"/{.claude/skills,.claude/agents,.claude/rules,workspace/memory}
+
+   # Copy Claude Code config
+   cp -r "$SCRIPT_DIR/templates/claude/"* "$AGENT_DIR/.claude/"
+   cp "$SCRIPT_DIR/templates/claude/.mcp.json" "$AGENT_DIR/.claude/"
+
+   # Copy workspace templates
+   cp "$SCRIPT_DIR/templates/workspace/"* "$AGENT_DIR/workspace/"
+
+   echo ""
+   echo "Agent '$AGENT_NAME' created at: $AGENT_DIR"
+   echo "Next steps:"
+   echo "  1. cd $AGENT_DIR && claude"
+   echo "  2. Run /bootstrap to onboard your agent"
+   echo "  3. Configure ClaudeClaw to use CWD=$AGENT_DIR"
+   ```
+
+2. Write workspace template files:
+   - `IDENTITY.md` — placeholder for name, creature, vibe, emoji
+   - `SOUL.md` — adapted from OpenClaw (be helpful, have opinions, earn trust)
+   - `AGENTS.md` — operating rules, memory policy, red lines
+   - `USER.md` — placeholder for human's info
+   - `TOOLS.md` — placeholder for local environment
+   - `HEARTBEAT.md` — default periodic checklist
+   - `BOOTSTRAP.md` — first-run onboarding conversation
+
+3. Write `.claude/CLAUDE.md` bridge file with `@imports`
+
+4. Write `.claude/.mcp.json` with Hindsight entry
+
+5. Test: `cd ~/.openclaude/agents/nova && claude` → verify workspace loads
+
+**Validation:** Agent directory created, CLAUDE.md imports workspace files, identity loads.
+
+### Phase 3: Skills + Agents + Rules (Day 2, morning)
+
+**Goal:** Native Claude Code capabilities configured per agent.
+
+1. Create skills:
+   - `bootstrap/SKILL.md` — one-time onboarding ("Who am I? Who are you?")
+   - `standup/SKILL.md` — git log summary (works from any CWD via absolute paths)
+   - `research/SKILL.md` — deep research on any topic (web + Hindsight memory)
+   - `remind/SKILL.md` — set reminders, manage personal tasks
+
+2. Create subagents:
+   - `cron-worker.md` — Read, Glob, Grep, Bash only (no writes)
+   - `researcher.md` — Read, WebSearch, WebFetch only
+   - `coder.md` — Full tool access, for project-specific coding tasks
+
+3. Create rules:
+   - `safety.md` — hard boundaries (never exfiltrate, ask before destructive ops)
+   - `messaging.md` — Telegram reply formatting
+
+4. Create `settings.json` with permissions
+
+5. Test: `/bootstrap` onboards the agent, `/standup` works, subagents have
+   correct tool restrictions
+
+**Validation:** Skills invoke correctly, agents are tool-restricted, rules apply.
+
+### Phase 4: ClaudeClaw + Telegram (Day 2, afternoon)
+
+**Goal:** Telegram bot running via daemon, routed to agent directory.
 
 1. Install ClaudeClaw:
    ```bash
    claude plugin marketplace add moazbuilds/claudeclaw
    claude plugin install claudeclaw
    ```
-2. Configure via setup wizard:
+2. Configure:
    - Telegram bot token (from @BotFather)
    - Heartbeat interval (30 min)
-   - Security level (level 2 — edit access)
+   - **CWD = `~/.openclaude/agents/nova/`** (agent's home directory)
 3. Start: `/claudeclaw:start`
-4. Test: Telegram message → response that uses Hindsight memory
+4. Test: Telegram message → response with correct identity and memory
 
-**Validation:** Telegram conversation with memory-augmented responses.
+**Validation:** Telegram conversation with memory-augmented responses, correct identity.
 
-### Phase 3: Agent Configuration (Day 2, morning)
-
-**Goal:** Identity, skills, agents, rules via `.claude/` files.
-
-1. Write `config/CLAUDE.md` (installed to `~/.claude/CLAUDE.md`):
-   - Agent name and identity
-   - **General-purpose assistant** framing (not project-specific)
-   - Core behavior rules
-   - Telegram response formatting
-   - Instruction to use Hindsight for memory (retain important facts, recall context)
-   - **CWD awareness**: "When asked to work on a project, use Bash to cd to the
-     project directory. For general questions, stay in $HOME."
-
-2. Create skills:
-   - `standup/SKILL.md` — git log summary (works in any project CWD)
-   - `review/SKILL.md` — code review checklist
-   - `research/SKILL.md` — deep research on any topic (web + memory)
-   - `remind/SKILL.md` — set reminders, manage personal tasks
-
-3. Create agents:
-   - `cron-worker.md` — Read, Glob, Grep, Bash only (no writes)
-   - `researcher.md` — Read, WebSearch, WebFetch only
-   - `coder.md` — Full tool access, for project-specific coding tasks
-
-4. Create rules:
-   - `safety.md` — hard boundaries
-   - `messaging.md` — Telegram formatting
-
-5. Create `settings.json` with global permissions
-
-6. Run `scripts/setup.sh` to copy all config to `~/.claude/`
-
-**Validation:** `/standup` works, agents have correct tool restrictions.
-
-### Phase 4: Cron + Heartbeat (Day 2, afternoon)
+### Phase 5: Cron + Heartbeat (Day 3, morning)
 
 **Goal:** Scheduled tasks delivering to Telegram.
 
 1. Configure ClaudeClaw heartbeat:
    - Active hours: 8am–10pm
-   - Checklist: review recent activity, pending tasks
+   - Reads `workspace/HEARTBEAT.md` for checklist
    - Target: Telegram chat
 
 2. Add cron jobs:
@@ -414,48 +544,17 @@ Telegram, opened interactively in a terminal, or triggered by a cron job.
 
 **Validation:** Cron fires and delivers without intervention.
 
-### Phase 5: Setup Script + Docs (Day 3)
+### Phase 6: Multi-Agent + Docs (Day 3, afternoon)
 
-**Goal:** Reproducible one-command setup.
+**Goal:** Second agent + documentation.
 
-1. Write `scripts/setup.sh`:
-   ```bash
-   #!/bin/bash
-   set -e
+1. Create second agent: `scripts/setup.sh atlas`
+2. Customize atlas's workspace (different IDENTITY.md, SOUL.md)
+3. Configure ClaudeClaw to route different Telegram bots → different agents
+4. Write `docs/setup.md`: prerequisites, step-by-step, troubleshooting
+5. Verify both agents work independently
 
-   SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-
-   # 1. Install OpenClaude config to user-level (~/.claude/)
-   echo "Installing OpenClaude config to ~/.claude/ ..."
-   mkdir -p ~/.claude/skills ~/.claude/agents ~/.claude/rules
-   cp "$SCRIPT_DIR/config/CLAUDE.md"     ~/.claude/CLAUDE.md
-   cp "$SCRIPT_DIR/config/settings.json" ~/.claude/settings.json
-   cp "$SCRIPT_DIR/config/.mcp.json"     ~/.claude/.mcp.json
-   cp -r "$SCRIPT_DIR/config/skills/"*   ~/.claude/skills/
-   cp -r "$SCRIPT_DIR/config/agents/"*   ~/.claude/agents/
-   cp -r "$SCRIPT_DIR/config/rules/"*    ~/.claude/rules/
-
-   # 2. Hindsight — advanced memory (Docker must be running)
-   echo "Starting Hindsight memory system..."
-   docker run --rm -d --name hindsight -p 8888:8888 -p 9999:9999 \
-     -e HINDSIGHT_API_LLM_PROVIDER=${HINDSIGHT_LLM_PROVIDER:-ollama} \
-     -e HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_LLM_URL:-http://host.docker.internal:11434} \
-     -v $HOME/.hindsight:/home/hindsight/.pg0 \
-     ghcr.io/vectorize-io/hindsight:latest
-
-   # 3. ClaudeClaw — daemon + Telegram + cron
-   claude plugin marketplace add moazbuilds/claudeclaw
-   claude plugin install claudeclaw
-
-   echo ""
-   echo "OpenClaude installed to ~/.claude/ (user-level, active everywhere)"
-   echo "Configure Telegram token, then run /claudeclaw:start"
-   echo "Memory UI: http://localhost:9999"
-   ```
-
-2. Write `docs/setup.md`: prerequisites, step-by-step, troubleshooting
-
-**Validation:** Fresh machine → working bot with memory in < 15 minutes.
+**Validation:** Two agents with different identities, both accessible via Telegram.
 
 ## What Gets Deleted from v1
 
@@ -479,11 +578,14 @@ Telegram, opened interactively in a terminal, or triggered by a cron job.
 
 | Need | Solution | Effort |
 |---|---|---|
-| Slack channel | Wait for ClaudeClaw/Channels support, or write ~300-line bridge | 0 or 1 day |
+| New agent | `scripts/setup.sh <name>` | 1 minute |
+| Slack channel | Wait for ClaudeClaw support, or write ~300-line bridge | 0 or 1 day |
 | Discord | Already in ClaudeClaw — just configure | 10 minutes |
 | Proactive messaging | ClaudeClaw exposes `send_message` | Config only |
 | Native Channels (when stable) | Replace ClaudeClaw Telegram with official plugin | Config only |
-| Switch memory provider | Swap Hindsight MCP entry for Mem0/Supermemory/ClawMem | Config only |
+| Switch memory provider | Swap `.mcp.json` Hindsight entry for Mem0/Supermemory/ClawMem | Config only |
+| Share skills between agents | Copy skill files (intentionally no shared config) | Copy files |
+| Migrate agent to new machine | Copy `~/.openclaude/agents/<name>/` | Copy folder |
 
 ## Summary
 
@@ -495,11 +597,14 @@ Telegram, opened interactively in a terminal, or triggered by a cron job.
 | **External tools** | 0 (all custom) | 2 (ClaudeClaw + Hindsight) |
 | **Setup time** | 30+ min | < 15 min |
 | **Maintenance** | High | Near-zero |
-| **Scope** | Project-tied | **General-purpose** (user-level `~/.claude/`) |
+| **Scope** | Project-tied | **General-purpose** (per-agent directories) |
+| **Multi-agent** | No | **Yes** — one folder per agent, fully independent |
+| **Agent portability** | No | **Yes** — copy folder to new machine |
 | **Memory benchmark** | Not tested | 91.4% LongMemEval |
-| **Memory features** | Vector + BM25 (custom) | Semantic + BM25 + graph + temporal + reranking + entity resolution + mental models |
+| **Memory system** | Vector + BM25 (custom) | File-based (daily logs + curated) + Hindsight (semantic) |
+| **Identity model** | Monolithic system prompt | **Layered** — IDENTITY + SOUL + AGENTS + USER + TOOLS |
 | **Telegram** | Custom grammY adapter | ClaudeClaw plugin |
 | **Cron** | Custom croner scheduler | ClaudeClaw plugin |
-| **Skills** | Custom loader | Native `~/.claude/skills/` (global) |
+| **Skills** | Custom loader | Native `.claude/skills/` |
 | **Sessions** | Custom session-map | Native Claude Code |
-| **Multi-project** | Single CWD | CWD per task, identity everywhere |
+| **Bootstrap** | Config wizard | **Conversational** — agent "comes alive" via /bootstrap |
