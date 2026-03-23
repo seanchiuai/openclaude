@@ -18,7 +18,7 @@ Before reaching for external tools, evaluate every built-in Claude Code feature:
 | **Hooks** (25+ events) | Shell/HTTP/prompt automation at lifecycle points | **Yes** | Replaces `src/router/` dispatch |
 | **Sessions** (`--session-id`/`--resume`) | Built-in persistence, transcripts, compaction | **Yes** | Replaces `src/engine/session-*` |
 | **CLAUDE.md** + rules | Persistent instructions, path-scoped rules, imports | **Yes** | Replaces `src/engine/system-prompt.ts` |
-| **Auto-memory** (`MEMORY.md`) | 200 lines auto-loaded, topic files on demand, cross-session | **Yes for now** | Sufficient for personal assistant. Add vector search later if needed |
+| **Auto-memory** (`MEMORY.md`) | 200 lines auto-loaded, topic files on demand, cross-session | **No** | 200-line limit, no semantic search, no similarity matching. Memory is core to a personal assistant — use ClawMem for advanced retrieval |
 | **/loop** | Recurring prompts at intervals | **No** | Dies on terminal close. 3-day expiry. Session-scoped only |
 | **Channels** (Telegram) | MCP-based message bridge | **No** | Research preview. Requires open terminal. No daemon mode. Bun-only |
 | **Desktop scheduled tasks** | Recurring tasks in desktop app | **No** | Requires desktop app open. Not unattended |
@@ -35,22 +35,36 @@ Three things require external tooling:
 3. **Durable cron with delivery** — No native way to run a prompt at 9am and send
    the result to Telegram while unattended.
 
-### What native features CAN replace
+### Why advanced memory matters
 
-**Auto-memory replaces ClawMem** for personal assistant use:
-- 200 lines auto-loaded + topic files loaded on demand
-- Persists across sessions and survives compaction
-- Claude manages what to remember and how to organize it
-- No embedding API keys, no SQLite, no Bun dependency
-- Upgrade to ClawMem later only if semantic search over thousands of docs is needed
+Memory is the core differentiator for a personal AI assistant. Native auto-memory
+is a flat file with a 200-line auto-load limit and no search capability. For an
+assistant that accumulates knowledge over weeks and months, this falls short:
 
-## Landscape: External Tools Still Needed
+- **No semantic search** — can't find "that conversation about deployment" by meaning
+- **No similarity matching** — can't surface related past decisions
+- **200-line ceiling** — topic files exist but Claude must guess which to load
+- **No temporal awareness** — can't prioritize recent vs. old memories
+- **No cross-reference** — can't link related concepts or trace decision chains
+
+[ClawMem](https://github.com/yoloshii/ClawMem) provides all of this:
+- Hybrid search: BM25 + vector + graph traversal
+- Temporal decay (recent memories rank higher)
+- Cross-encoder reranking for precision
+- Decision extraction from session transcripts
+- Handoff generation (session continuity across restarts)
+- 28 MCP tools for granular retrieval
+- Hooks: auto-inject context on every prompt, capture decisions on stop
+- Local embedding models — no API key required
+
+## Landscape: External Tools Needed
 
 | Project | What we use it for | Why |
 |---|---|---|
-| [**ClaudeClaw**](https://github.com/moazbuilds/claudeclaw) | Daemon + Telegram + cron + heartbeat | Only tool that provides headless daemon on Pro subscription |
+| [**ClaudeClaw**](https://github.com/moazbuilds/claudeclaw) | Daemon + Telegram + cron + heartbeat | Headless daemon on Pro subscription |
+| [**ClawMem**](https://github.com/yoloshii/ClawMem) | Advanced memory with hybrid RAG | Semantic search, temporal decay, decision extraction |
 
-That's it. One external dependency.
+Two external dependencies. Both install in minutes.
 
 ### Why not claude-code-telegram?
 
@@ -63,24 +77,26 @@ ClaudeClaw is a plugin that extends Claude Code rather than wrapping it.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Claude Code + ClaudeClaw                      │
+│                   Claude Code + ClaudeClaw + ClawMem                  │
 │                                                                     │
-│  ┌──────────────────┐  ┌──────────────────────────────────────┐    │
-│  │  ClaudeClaw       │  │  Native Claude Code                   │    │
-│  │  (plugin)         │  │                                      │    │
-│  │                  │  │  - Auto-memory (MEMORY.md)           │    │
-│  │  - Daemon        │  │  - Skills (.claude/skills/)          │    │
-│  │  - Telegram      │  │  - Agents (.claude/agents/)          │    │
-│  │  - Cron          │  │  - Rules (.claude/rules/)            │    │
-│  │  - Heartbeat     │  │  - Hooks (settings.json)             │    │
-│  │  - Web dashboard │  │  - Sessions (built-in)               │    │
-│  └──────────────────┘  └──────────────────────────────────────┘    │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │  ClaudeClaw   │  │   ClawMem    │  │  Native Claude Code       │  │
+│  │  (plugin)     │  │   (MCP)      │  │                          │  │
+│  │              │  │              │  │  - Skills                 │  │
+│  │  - Daemon    │  │  - BM25      │  │  - Agents                │  │
+│  │  - Telegram  │  │  - Vector    │  │  - Hooks                 │  │
+│  │  - Cron      │  │  - Graph     │  │  - Rules                 │  │
+│  │  - Heartbeat │  │  - Reranking │  │  - Sessions              │  │
+│  │  - Dashboard │  │  - Hooks     │  │  - CLAUDE.md             │  │
+│  │              │  │  - 28 tools  │  │                          │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  .claude/  (OpenClaude's contribution)                        │   │
 │  │                                                               │   │
 │  │    CLAUDE.md          — Agent identity + behavior rules       │   │
 │  │    settings.json      — Permissions + hooks                   │   │
+│  │    .mcp.json          — ClawMem server entry                  │   │
 │  │                                                               │   │
 │  │    skills/                                                    │   │
 │  │      standup/SKILL.md     — Daily standup                     │   │
@@ -100,15 +116,24 @@ ClaudeClaw is a plugin that extends Claude Code rather than wrapping it.
 
 ### Component responsibilities
 
-**ClaudeClaw** (1 external plugin):
+**ClaudeClaw** (plugin — daemon + channels + scheduling):
 - Background daemon (launchd/systemd)
 - Telegram adapter
 - Cron scheduler with timezone support
 - Heartbeat (periodic checklist review)
 - Web dashboard
 
-**Native Claude Code** (zero external dependencies):
-- Auto-memory (MEMORY.md) — cross-session context
+**ClawMem** (MCP server — advanced memory):
+- Hybrid retrieval: BM25 + vector embeddings + graph traversal
+- Claude Code hooks: auto-inject context on every prompt, capture decisions on stop
+- Decision extraction from session transcripts
+- Handoff generation at session end (continuity across restarts)
+- Local embedding models (no API key needed)
+- Cross-encoder reranking for precision
+- Temporal decay (recent memories rank higher)
+- 28 MCP tools for granular agent-initiated retrieval
+
+**Native Claude Code** (zero dependencies):
 - Skills — reusable workflows
 - Agents — restricted subagents
 - Hooks — lifecycle automation
@@ -117,6 +142,7 @@ ClaudeClaw is a plugin that extends Claude Code rather than wrapping it.
 
 **OpenClaude** (config files only):
 - `.claude/CLAUDE.md` — agent identity
+- `.claude/.mcp.json` — ClawMem server entry
 - `.claude/skills/` — custom workflows
 - `.claude/agents/` — restricted contexts
 - `.claude/rules/` — safety + formatting
@@ -130,6 +156,7 @@ openclaude/
   .claude/
     CLAUDE.md              # Agent identity, behavior, safety
     settings.json          # Permissions, hooks
+    .mcp.json              # ClawMem server entry
 
     skills/
       standup/SKILL.md     # Review git commits, summarize
@@ -145,7 +172,7 @@ openclaude/
       messaging.md         # Telegram formatting
 
   scripts/
-    setup.sh               # Install ClaudeClaw + configure
+    setup.sh               # Install ClaudeClaw + ClawMem + configure
 
   docs/
     setup.md               # Manual setup guide
@@ -174,7 +201,27 @@ openclaude/
 
 **Validation:** Round-trip Telegram conversation working.
 
-### Phase 2: Agent Configuration (Day 1, afternoon)
+### Phase 2: ClawMem Memory System (Day 1, afternoon)
+
+**Goal:** Advanced vector memory auto-injected into every session.
+
+1. Install ClawMem:
+   ```bash
+   npm install -g clawmem
+   clawmem bootstrap ~/.openclaude/memory --name openclaude
+   clawmem setup hooks    # SessionStart, UserPromptSubmit, Stop, PreCompact
+   clawmem setup mcp      # 28 tools for agent-initiated retrieval
+   ```
+2. Configure embedding provider:
+   - Local (no API key): node-llama-cpp with EmbeddingGemma-300M (~400MB)
+   - Or cloud: OpenAI text-embedding-3-small (if API key available)
+3. Add `.mcp.json` entry for ClawMem server
+4. Test: ask Claude to remember something → verify it persists
+5. Test: semantic search — ask about a topic from a previous session
+
+**Validation:** Memory auto-injects on prompt; semantic search returns relevant results.
+
+### Phase 3: Agent Configuration (Day 2, morning)
 
 **Goal:** Identity, skills, agents, rules via `.claude/` files.
 
@@ -202,7 +249,7 @@ openclaude/
 
 **Validation:** `/standup` works, agents have correct tool restrictions.
 
-### Phase 3: Cron + Heartbeat (Day 2, morning)
+### Phase 4: Cron + Heartbeat (Day 2, afternoon)
 
 **Goal:** Scheduled tasks delivering to Telegram.
 
@@ -219,7 +266,7 @@ openclaude/
 
 **Validation:** Cron fires and delivers without intervention.
 
-### Phase 4: Setup Script + Docs (Day 2, afternoon)
+### Phase 5: Setup Script + Docs (Day 3)
 
 **Goal:** Reproducible setup.
 
@@ -227,8 +274,17 @@ openclaude/
    ```bash
    #!/bin/bash
    set -e
+
+   # ClaudeClaw — daemon + Telegram + cron
    claude plugin marketplace add moazbuilds/claudeclaw
    claude plugin install claudeclaw
+
+   # ClawMem — advanced memory
+   npm install -g clawmem
+   clawmem bootstrap ~/.openclaude/memory --name openclaude
+   clawmem setup hooks
+   clawmem setup mcp
+
    echo "Done. Run /claudeclaw:start in Claude Code to begin."
    ```
 
@@ -260,7 +316,6 @@ If needs grow beyond what's built here:
 
 | Need | Solution | Effort |
 |---|---|---|
-| Semantic search over large knowledge base | Add [ClawMem](https://github.com/yoloshii/ClawMem) MCP server | 1 hour install |
 | Slack channel | Wait for ClaudeClaw/Channels support, or write ~300-line bridge | 0 or 1 day |
 | Discord | Already in ClaudeClaw — just configure | 10 minutes |
 | Proactive messaging from code | ClaudeClaw exposes `send_message` | Config only |
@@ -273,10 +328,10 @@ If needs grow beyond what's built here:
 | **Lines of code** | 35,000 | 0 |
 | **Test files** | 97 | 0 |
 | **Production deps** | 15 | 0 |
-| **External tools** | 0 (all custom) | 1 (ClaudeClaw) |
+| **External tools** | 0 (all custom) | 2 (ClaudeClaw + ClawMem) |
 | **Setup time** | 30+ min | < 10 min |
 | **Maintenance** | High | Near-zero |
-| **Memory** | Custom vector search | Native auto-memory |
+| **Memory** | Custom vector search (6 providers) | ClawMem (BM25 + vector + graph + reranking) |
 | **Telegram** | Custom grammY adapter | ClaudeClaw plugin |
 | **Cron** | Custom croner scheduler | ClaudeClaw plugin |
 | **Skills** | Custom loader | Native `.claude/skills/` |
