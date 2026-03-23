@@ -6,7 +6,7 @@ General-purpose personal AI assistant built on Claude Code native features + Cla
 
 - **Agent directories** (`~/.openclaude/agents/<name>/`) — self-contained, each with `.claude/` config + `workspace/` identity files
 - **Hindsight** — Docker container per agent, MCP-first semantic memory (retain/recall/reflect)
-- **ClaudeClaw** — Plugin for daemon mode, Telegram, cron, heartbeat
+- **Telegram** — Official Anthropic plugin (interactive) or ClaudeClaw (daemon mode, cron, heartbeat)
 - **Native Claude Code** — Skills, agents, hooks, rules, sessions, CLAUDE.md `@import`
 
 ## Project Layout

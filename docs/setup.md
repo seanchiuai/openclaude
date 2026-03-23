@@ -54,14 +54,44 @@ curl http://localhost:8888/docs
 # Use `retain` to store a fact, then `recall` to retrieve it
 ```
 
-### 5. Configure ClaudeClaw (Optional)
+### 5. Connect Telegram (Optional)
 
-For daemon mode + Telegram:
+Create a Telegram bot via @BotFather first, then choose one of two options:
 
-1. Create a Telegram bot via @BotFather
-2. Install ClaudeClaw: `claude plugin marketplace add moazbuilds/claudeclaw`
-3. Configure with your bot token and agent directory
-4. ClaudeClaw spawns `claude -p` with CWD = your agent directory
+#### Option A: Official Anthropic Plugin (simpler)
+
+Interactive session with Telegram messages forwarded to Claude:
+
+```bash
+# Install (once):
+/plugin install telegram@claude-plugins-official
+/reload-plugins
+/telegram:configure YOUR_BOT_TOKEN
+
+# Start with Telegram:
+cd ~/.openclaude/agents/nova
+claude --channels plugin:telegram@claude-plugins-official
+```
+
+#### Option B: ClaudeClaw (daemon + cron + heartbeat)
+
+Background daemon that runs 24/7, with cron jobs and periodic heartbeats:
+
+```bash
+# Install (once):
+claude plugin marketplace add moazbuilds/claudeclaw
+/reload-plugins
+
+# Start from agent directory:
+cd ~/.openclaude/agents/nova
+claude
+# Then run: /claudeclaw:start
+# Follow the setup wizard to configure Telegram, heartbeat, etc.
+```
+
+**When to use which:**
+- **Official** — you want Telegram in an interactive session you're already using
+- **ClaudeClaw** — you want a daemon that runs while you're away (heartbeats, cron jobs, proactive check-ins)
 
 ## Multiple Agents
 
