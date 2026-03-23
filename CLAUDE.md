@@ -19,7 +19,8 @@ templates/
 scripts/
   setup.sh           # Create new agent from templates
   uninstall.sh       # Remove agent
-  auto-retain.sh     # Stop hook: extract facts → Hindsight
+  log-session.sh       # SessionEnd hook: append session to manifest
+  nightly-memory.sh    # Nightly cron: process transcripts + generate daily log
   check-memory-size.sh  # PreToolUse hook: enforce MEMORY.md 50-line cap
   health-check.sh    # System cron: verify Hindsight + ClaudeClaw alive
   export-agent.sh    # Bundle agent + Hindsight data for migration
