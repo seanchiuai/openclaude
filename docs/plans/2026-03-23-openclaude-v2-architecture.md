@@ -13,7 +13,7 @@ release.
 |---|---|---|---|
 | **Skills** (`.claude/skills/`) | Reusable workflows with YAML frontmatter, auto-invocation, args | **Yes** | Replaces `src/skills/` entirely |
 | **Agents** (`.claude/agents/`) | Subagents with tool restrictions, model override, hooks | **Yes** | Replaces `src/engine/subagent-*` |
-| **Hooks** (25+ events) | Shell/HTTP/prompt automation at lifecycle points | **Yes** | Replaces `src/router/` dispatch |
+| **Hooks** (22 events) | Shell/HTTP/prompt automation at lifecycle points | **Yes** | Replaces `src/router/` dispatch |
 | **Sessions** (`--session-id`/`--resume`) | Built-in persistence, transcripts, compaction | **Yes** | Replaces `src/engine/session-*` |
 | **CLAUDE.md** + rules | Persistent instructions, path-scoped rules, imports | **Yes** | Replaces `src/engine/system-prompt.ts` |
 | **`@import`** in CLAUDE.md | Pull external files into context at session start | **Yes** | Enables layered workspace files (tested, works) |
@@ -104,8 +104,8 @@ We evaluated every major AI memory system:
 - Entity resolution ("Alice" = "my coworker Alice")
 - 91.4% LongMemEval (verified by Virginia Tech Sanghani Center)
 - MIT license, no feature gating
-- Single Docker command, embedded PostgreSQL (no external deps)
-- Ollama support for fully local operation
+- Single Docker command, embedded PostgreSQL (requires LLM API key or Ollama)
+- Ollama support for fully local operation (Ollama must be installed and running)
 - MCP-first design — native integration with Claude Code
 - 3.8k stars, growing rapidly, Fortune 500 production deployments
 - **Winner for OpenClaude.**
@@ -137,7 +137,7 @@ We evaluated every major AI memory system:
 | Knowledge graph | **Entity resolution + graph** | Neo4j (self-hosted) | Ontology-aware | Semantic edges |
 | Temporal awareness | **Time-range filtering** | Mem0ᵍ temporal | Limited | Temporal decay |
 | Memory model | **Biomimetic (3 types)** | Flat facts | User profiles | Flat + graph |
-| External dependencies | **Embedded PostgreSQL** | PG + Neo4j + API | Cloudflare | SQLite + Bun |
+| External dependencies | **Embedded PG + LLM key or Ollama** | PG + Neo4j + API | Cloudflare | SQLite + Bun |
 | Feature gating | **None** | Graph = $249/mo cloud | Enterprise | SOTA models = NC |
 
 Hindsight provides the best independently verified retrieval accuracy, simplest
@@ -218,7 +218,7 @@ and zero cloud dependency.
 - Cron scheduler with timezone support + exclude windows
 - Heartbeat (periodic checklist review + proactive action)
 - Web dashboard at configurable port
-- Session management via JSON file (`sessions-map.json` — turn counts, compact tracking)
+- Session management via JSON file (`session.json` at `.claude/claudeclaw/session.json` — single global session with turn counts, compact tracking)
 - Model routing (agentic mode with task-type detection)
 
 **How ClaudeClaw spawns Claude Code** (verified from source — `src/runner.ts`):
@@ -257,22 +257,40 @@ Bun.spawn(["claude", "-p",
 - Sessions isolated by CWD (different `~/.claude/projects/<encoded-cwd>/`)
 - Each agent gets its own Hindsight Docker container (hard isolation)
 
-**Hindsight** (MCP server — one container per agent):
-- **Retain**: store facts, experiences, and mental models
+**Hindsight** (MCP server — one container per agent, **not yet deployed**):
+- 29 MCP tools total. Core: `retain`, `recall`, `reflect`. Also: `list_memories`,
+  `get_memory`, `delete_memory`, `create_mental_model`, `list_mental_models`,
+  `get_mental_model`, `update_mental_model`, `delete_mental_model`,
+  `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`,
+  `list_documents`, `get_document`, `delete_document`, `list_operations`,
+  `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `update_bank`,
+  `delete_bank`, `clear_memories`, `list_banks`, `create_bank`, `get_bank_stats`.
+  Tool selection configurable via `HINDSIGHT_API_MCP_ENABLED_TOOLS`.
 - **Recall**: 4 parallel strategies (semantic + BM25 + graph + temporal) + reranking
 - **Reflect**: generate new insights from existing memories
 - Entity resolution (deduplicate people, concepts, decisions)
 - Knowledge graph with entity/temporal/causal links
 - Biomimetic memory types: world facts, experiences, learned mental models
 - MCP-first: native integration with Claude Code
-- Runs as Docker container with embedded PostgreSQL
-- Optional: Ollama for fully local operation (no API key)
+- Runs as Docker container (5 GB image) with embedded PostgreSQL + local
+  embedding model (`BAAI/bge-small-en-v1.5`) + local reranker
+  (`cross-encoder/ms-marco-MiniLM-L-6-v2`). RAM undocumented but likely
+  >200MB due to bundled ML models (embedding + reranker loaded at startup).
+- **Requires an LLM API key** (`HINDSIGHT_API_LLM_API_KEY`). Ollama is an
+  alternative (`HINDSIGHT_API_LLM_PROVIDER=ollama`) but Ollama must be running
+  and accessible from within Docker (`host.docker.internal:11434`).
+  Fully keyless local operation requires a working Ollama install.
+- **No `/health` endpoint** — use `/metrics` (Prometheus) or `/docs` (OpenAPI)
+  to verify the server is up. Health check cron should use:
+  `curl -sf http://localhost:8888/docs`
+- **MCP endpoint is bank-scoped:** single-bank = `http://localhost:8888/mcp/{bank_id}/`,
+  multi-bank = `http://localhost:8888/mcp/` (with `X-Bank-Id` header).
+  Auth via `HINDSIGHT_API_MCP_AUTH_TOKEN` (Bearer).
 - **Per-agent deployment:** each agent gets its own container on a unique port:
   - `hindsight-nova` → `:8888` / `:9999`
   - `hindsight-atlas` → `:8890` / `:9990`
-  - Each agent's `.mcp.json` points to its own port
+  - Each agent's `.mcp.json` points to its own port + bank
   - Data volumes: `~/.hindsight-<agent>/` per agent
-  - ~200MB RAM per container
 
 **Native Claude Code** (zero dependencies):
 - Skills — reusable workflows
@@ -426,7 +444,7 @@ docker run -d --name hindsight-atlas -p 8890:8888 -p 9990:9999 \
 
 Each agent's `.mcp.json` points to its own port:
 ```json
-{ "mcpServers": { "hindsight": { "type": "http", "url": "http://localhost:8888/mcp" } } }
+{ "mcpServers": { "hindsight": { "type": "http", "url": "http://localhost:8888/mcp/nova/" } } }
 ```
 
 **Cost:** ~200MB RAM per container. Acceptable for 2-3 agents on a laptop.
@@ -446,7 +464,9 @@ as they come up. This captures context-rich memories with the agent's judgment.
    "Extract key facts, decisions, preferences, and outcomes from this transcript.
    Exclude anything already retained to Hindsight during the session.
    Output as a JSON array of strings."
-3. Calls Hindsight HTTP API to retain each extracted fact
+3. Calls Hindsight REST API to retain each extracted fact:
+   `POST http://localhost:8888/v1/default/banks/{bank_id}/memories`
+   with `{"items": [{"content": "..."}]}` per fact
 4. Logs what was retained to `workspace/memory/retain.log`
 
 **Dedupe:** The extraction prompt explicitly excludes facts already retained
@@ -496,7 +516,7 @@ write access, not full write.
 
 **Fix:** System-level health monitoring (not dependent on ClaudeClaw):
 ```crontab
-*/5 * * * * curl -sf http://localhost:8888/health || docker restart hindsight
+*/5 * * * * curl -sf http://localhost:8888/docs || docker restart hindsight
 ```
 - `@import` failure: rule in `safety.md` instructs agent to alert if workspace
   files are missing from context
@@ -675,7 +695,7 @@ with `scripts/import-agent.sh`. Agents are organizationally independent.**
      ghcr.io/vectorize-io/hindsight:latest
    ```
 
-2. Verify API is running: `curl http://localhost:8888/health`
+2. Verify API is running: `curl http://localhost:8888/docs` (no `/health` endpoint)
 
 3. Test in Claude Code session:
    - Retain: "Remember that our deployment uses blue-green strategy on AWS ECS"
@@ -873,6 +893,6 @@ captures the day's Hindsight memories as a human-readable markdown file.
 | **Telegram** | Custom grammY adapter | ClaudeClaw plugin (`claude -p` CLI) |
 | **Cron** | Custom croner scheduler | ClaudeClaw cron + system crontab backup |
 | **Skills** | Custom loader | Native `.claude/skills/` |
-| **Sessions** | Custom session-map | ClaudeClaw SQLite + Claude Code `--resume` |
+| **Sessions** | Custom session-map | ClaudeClaw `session.json` + Claude Code `--resume` |
 | **Bootstrap** | Config wizard | **Conversational** — agent "comes alive" via /bootstrap |
 | **Error handling** | Custom logging | System cron health checks + hook-based alerts |
