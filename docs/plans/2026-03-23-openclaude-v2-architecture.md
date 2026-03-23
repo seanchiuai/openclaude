@@ -9,8 +9,6 @@ release.
 
 ## Landscape: What Already Exists
 
-Before proposing a build plan, here's what's already shipping:
-
 ### Native Claude Code (March 2026)
 
 - **Channels** (research preview): Telegram + Discord via plugin system. MCP-based,
@@ -35,7 +33,6 @@ Before proposing a build plan, here's what's already shipping:
 | [**claude-code-telegram**](https://github.com/RichardAtCT/claude-code-telegram) | 1.1k | Python Telegram bot: SDK/CLI dual mode, SQLite sessions, webhooks, cron, voice | Python | API key or CLI auth |
 | [**ClawMem**](https://github.com/yoloshii/ClawMem) | — | MCP memory server: hybrid RAG (BM25 + vector + graph), hooks integration, local LLM reranking | Bun | N/A |
 | [**secure-openclaw**](https://github.com/ComposioHQ/secure-openclaw) | — | WhatsApp/Telegram/Signal/iMessage bridge + Agent SDK + 500 app integrations + sandboxed execution | Node | API key |
-| [**claude-mem**](https://github.com/thedotmack/claude-mem) | — | Auto-capture + compress + inject session memory via Claude Code plugin | — | N/A |
 
 ### Key Insight
 
@@ -43,286 +40,330 @@ Before proposing a build plan, here's what's already shipping:
 daemon + cron + heartbeat + Telegram/Discord — running on Pro subscription with
 zero API costs. ClawMem is already the vector memory MCP server with hybrid RAG.
 
-## Decision: Build vs. Compose vs. Fork
+## Decision: Telegram-only via composition
 
-### Option A: Build from scratch (original plan)
+With Telegram as the only channel, there is **zero custom runtime code to write**.
+ClaudeClaw handles Telegram natively. ClawMem handles memory. OpenClaude becomes
+a configuration and personality layer — `.claude/` files only.
 
-- ~3-5k lines of new code
-- 17 days of implementation
-- Reinvents what ClaudeClaw and ClawMem already ship
-- Only advantage: Slack support, Node.js (vs Bun)
+Slack can be added later if needed (either when ClaudeClaw adds it, when Claude
+Code Channels adds it, or as a ~300-line standalone adapter).
 
-### Option B: Compose existing tools (recommended)
-
-- Install ClaudeClaw plugin for daemon + channels + cron
-- Install ClawMem for vector memory
-- Write only the **glue** that's missing: Slack adapter, config unification
-- ~500-1000 lines of new code
-- 3-5 days of implementation
-
-### Option C: Fork ClaudeClaw + extend
-
-- Fork ClaudeClaw, add Slack support + ClawMem integration
-- Contribute upstream where possible
-- ~1-2k lines of new code
-- 5-8 days of implementation
-
-**Recommendation: Option B** — compose first, fork only if composition hits walls.
-
-## Proposed Architecture (Option B)
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Claude Code Session                          │
 │                                                                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │  ClaudeClaw   │  │   ClawMem    │  │   openclaude plugin      │  │
-│  │  (plugin)     │  │   (MCP)      │  │   (Slack + glue)         │  │
-│  │              │  │              │  │                          │  │
-│  │  - Daemon    │  │  - Vector    │  │  - Slack adapter         │  │
-│  │  - Telegram  │  │    search    │  │  - Config bridge         │  │
-│  │  - Discord   │  │  - BM25      │  │  - Unified setup wizard  │  │
-│  │  - Cron      │  │  - Graph     │  │                          │  │
-│  │  - Heartbeat │  │  - Hooks     │  │                          │  │
-│  │  - Dashboard │  │  - Reranking │  │                          │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
+│  ┌──────────────────┐  ┌──────────────────┐                        │
+│  │  ClaudeClaw       │  │   ClawMem         │                        │
+│  │  (plugin)         │  │   (MCP server)    │                        │
+│  │                  │  │                  │                        │
+│  │  - Daemon        │  │  - BM25 + vector │                        │
+│  │  - Telegram      │  │  - Graph search  │                        │
+│  │  - Discord       │  │  - Hooks (auto-  │                        │
+│  │  - Cron          │  │    inject context)│                        │
+│  │  - Heartbeat     │  │  - Reranking     │                        │
+│  │  - Web dashboard │  │  - Local LLMs    │                        │
+│  │  - GLM fallback  │  │  - 28 MCP tools  │                        │
+│  └──────────────────┘  └──────────────────┘                        │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  .claude/                                                     │   │
+│  │  .claude/  (OpenClaude's contribution)                        │   │
+│  │                                                               │   │
 │  │    CLAUDE.md          — Agent identity + behavior rules       │   │
-│  │    settings.json      — Permissions                           │   │
-│  │    skills/            — Custom playbooks (standup, etc.)      │   │
-│  │    agents/            — Restricted agents (cron-worker, etc.) │   │
-│  │    rules/             — Safety, messaging conventions         │   │
+│  │    settings.json      — Permissions + env vars                │   │
+│  │    .mcp.json          — ClawMem server entry                  │   │
+│  │                                                               │   │
+│  │    skills/                                                    │   │
+│  │      standup/SKILL.md     — Daily standup                     │   │
+│  │      review/SKILL.md      — Code review workflow              │   │
+│  │      deploy/SKILL.md      — Deployment checklist              │   │
+│  │      memory-flush/SKILL.md — Save context before exit         │   │
+│  │                                                               │   │
+│  │    agents/                                                    │   │
+│  │      cron-worker.md   — Restricted agent for scheduled tasks  │   │
+│  │      researcher.md    — Read-only research agent              │   │
+│  │                                                               │   │
+│  │    rules/                                                     │   │
+│  │      safety.md        — Boundaries and constraints            │   │
+│  │      messaging.md     — Channel reply formatting              │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### What each component owns
 
-**ClaudeClaw** (existing plugin, install as-is):
-- Background daemon lifecycle
+**ClaudeClaw** (install as-is):
+- Background daemon lifecycle (launchd/systemd)
 - Telegram + Discord adapters
 - Cron scheduler with timezone support
-- Heartbeat system
-- Web dashboard
-- Model fallback (GLM)
-- Security levels
+- Heartbeat system (periodic checklist review)
+- Web dashboard for monitoring
+- Model fallback (GLM when primary limit reached)
+- Security levels (read-only → full access)
 
-**ClawMem** (existing MCP server, install as-is):
-- Hybrid retrieval (BM25 + vector + graph)
-- Session hooks (auto-inject context on every prompt)
-- Decision extraction from transcripts
+**ClawMem** (install as-is):
+- Hybrid retrieval (BM25 + vector + graph traversal)
+- Claude Code hooks (auto-inject context on every prompt)
+- Decision extraction from session transcripts
 - Handoff generation at session end
 - Local embedding models (no API key needed)
 - Cross-encoder reranking
+- 28 MCP tools for agent-initiated retrieval
 
-**openclaude plugin** (what we build):
-- **Slack adapter** — ClaudeClaw only has Telegram + Discord. We add Slack via
-  `@slack/bolt` Socket Mode, exposing it as a ClaudeClaw-compatible channel.
-- **Config bridge** — Unified `~/.openclaude/config.json` that generates configs
-  for both ClaudeClaw and ClawMem. Single source of truth.
-- **Setup wizard** — `openclaude setup` that installs ClaudeClaw + ClawMem,
-  configures all three, and validates the setup.
-- **Custom skills** — `.claude/skills/` for project-specific workflows.
-- **Custom agents** — `.claude/agents/` for restricted execution contexts.
+**OpenClaude** (what we create — config files only):
+- `CLAUDE.md` — agent identity, behavior rules, safety constraints
+- Skills — reusable workflows (standup, review, deploy, etc.)
+- Agents — restricted execution contexts (cron-worker, researcher)
+- Rules — safety boundaries, message formatting conventions
+- MCP config — ClawMem server entry
+- Settings — permission defaults
 
-## What OpenClaude Becomes
-
-OpenClaude is no longer a runtime. It's a **configuration layer + Slack adapter**:
+## Project Structure
 
 ```
 openclaude/
   .claude/
-    CLAUDE.md                  # Agent identity, behavior, safety
-    settings.json              # Permissions
-    .mcp.json                  # ClawMem + any custom MCP servers
+    CLAUDE.md
+    settings.json
+    .mcp.json
 
     skills/
-      standup/SKILL.md         # Daily standup
-      review/SKILL.md          # Code review workflow
-      deploy/SKILL.md          # Deployment checklist
+      standup/SKILL.md
+      review/SKILL.md
+      deploy/SKILL.md
+      memory-flush/SKILL.md
 
     agents/
-      cron-worker.md           # Restricted agent for scheduled tasks
-      researcher.md            # Read-only research agent
+      cron-worker.md
+      researcher.md
 
     rules/
-      safety.md                # Boundaries and constraints
-      messaging.md             # Channel reply formatting
+      safety.md
+      messaging.md
 
-  src/
-    slack-channel/             # Slack adapter (ClaudeClaw extension)
-      index.ts                 # @slack/bolt Socket Mode
-      types.ts                 # Message types
-    config-bridge/             # Unified config → ClaudeClaw + ClawMem
-      index.ts
-      schema.ts                # Zod schema
-    cli.ts                     # setup wizard + status
+  docs/
+    setup.md              # Installation guide
+    plans/                # Architecture docs
 
-  package.json
-  tsconfig.json
+  scripts/
+    setup.sh              # One-command install: ClaudeClaw + ClawMem + config
 ```
 
-**Estimated size: ~800 lines** (down from 35,000).
+**Custom code: 0 lines of TypeScript.** One shell script for setup.
 
 ## Implementation Plan
 
-### Phase 1: Foundation (Day 1)
+### Phase 1: Install + Configure ClaudeClaw (Day 1, morning)
 
-**Goal:** Working ClaudeClaw + ClawMem installation.
+**Goal:** Telegram bot running via ClaudeClaw daemon.
 
-1. Install ClaudeClaw: `claude plugin marketplace add moazbuilds/claudeclaw`
-2. Install ClawMem: `npm install -g clawmem && clawmem setup hooks && clawmem setup mcp`
-3. Configure ClaudeClaw: Telegram bot token, heartbeat interval, security level
-4. Configure ClawMem: embedding provider, vault location
-5. Test: send Telegram message → get response with memory context
+1. Install ClaudeClaw plugin:
+   ```bash
+   claude plugin marketplace add moazbuilds/claudeclaw
+   claude plugin install claudeclaw
+   ```
+2. Run ClaudeClaw setup wizard — configure:
+   - Telegram bot token (from @BotFather)
+   - Heartbeat interval (e.g., 30 min)
+   - Security level (e.g., level 2 — edit access)
+   - Model selection
+3. Start daemon: `/claudeclaw:start`
+4. Test: send Telegram message → get Claude Code response
 
-**Validation:** Telegram conversation with persistent memory working end-to-end.
+**Validation:** Round-trip Telegram conversation working.
 
-### Phase 2: Claude Code Configuration (Day 2)
+### Phase 2: Install + Configure ClawMem (Day 1, afternoon)
 
-**Goal:** Agent identity and skills via native `.claude/` files.
+**Goal:** Vector memory auto-injected into every Claude Code session.
 
-1. Write `CLAUDE.md` — agent identity, behavior rules, safety constraints
-2. Create skills: standup, review, deploy, memory-flush
-3. Create agents: cron-worker (restricted tools), researcher (read-only)
-4. Create rules: safety.md, messaging.md
-5. Create `.mcp.json` with ClawMem server entry
-6. Create `settings.json` with permission defaults
-7. Test: `/standup` skill invocation, cron-worker agent delegation
+1. Install ClawMem:
+   ```bash
+   npm install -g clawmem
+   clawmem bootstrap ~/.openclaude/memory --name openclaude
+   clawmem setup hooks
+   clawmem setup mcp
+   ```
+2. Configure embedding provider:
+   - Local (no API key): node-llama-cpp with EmbeddingGemma-300M
+   - Or cloud: OpenAI text-embedding-3-small
+3. Test: start a Claude Code session, verify context auto-injection on prompt
+4. Test: ask Claude to remember something, verify it persists across sessions
 
-**Validation:** All skills and agents work in a normal `claude` session.
+**Validation:** Memory search returns relevant results; context appears in new sessions.
 
-### Phase 3: Slack Adapter (Day 3-4)
+### Phase 3: Agent Configuration (Day 2)
 
-**Goal:** Slack messages reach Claude Code through ClaudeClaw's daemon.
+**Goal:** Agent identity, skills, and rules via `.claude/` files.
 
-1. Research ClaudeClaw's channel extension API
-2. If extensible: write Slack adapter as ClaudeClaw channel plugin
-3. If not extensible: write standalone Slack bridge that posts to ClaudeClaw's API
-4. Fallback: write minimal standalone daemon with only Slack + spawn logic
-5. Tests for Slack adapter
+1. Write `CLAUDE.md`:
+   - Agent name and identity
+   - Core behavior rules
+   - Response formatting for Telegram
+   - Tool usage preferences
+   - Safety constraints
 
-**Validation:** Slack message → Claude Code response in Slack thread.
+2. Create skills:
+   - `standup/SKILL.md` — review recent git commits, summarize
+   - `review/SKILL.md` — code review workflow with checklist
+   - `deploy/SKILL.md` — deployment checklist and verification
+   - `memory-flush/SKILL.md` — save important session context to ClawMem
 
-### Phase 4: Config Bridge + Setup Wizard (Day 4-5)
+3. Create agents:
+   - `cron-worker.md` — restricted tools (Read, Glob, Grep, Bash), no Edit/Write.
+     Used for scheduled read-only tasks.
+   - `researcher.md` — Read + WebSearch + WebFetch only. For deep research without
+     code changes.
 
-**Goal:** Single config file, one-command setup.
+4. Create rules:
+   - `safety.md` — what the agent must never do
+   - `messaging.md` — how to format replies for Telegram (markdown, length limits)
 
-1. `src/config-bridge/schema.ts` — Zod schema for unified config
-2. `src/config-bridge/index.ts` — Generate ClaudeClaw + ClawMem configs from unified config
-3. `src/cli.ts` — `openclaude setup` wizard:
-   - Detect/install ClaudeClaw plugin
-   - Detect/install ClawMem
-   - Configure Telegram/Discord/Slack tokens
-   - Configure memory embedding provider
-   - Generate all config files
-   - Validate setup
-4. `openclaude status` — show daemon health, memory stats, channel status
+5. Create `settings.json` with permission defaults
+6. Create `.mcp.json` with ClawMem entry
 
-**Validation:** `openclaude setup` → fully configured system in < 5 minutes.
+7. Test: `/standup` skill, cron-worker delegation, rule enforcement
 
-### Phase 5: Polish + Documentation (Day 5)
+**Validation:** All skills invoke correctly; agents have proper tool restrictions.
 
-**Goal:** Production-ready with clear documentation.
+### Phase 4: Cron + Heartbeat Setup (Day 2, afternoon)
 
-1. Error handling for missing dependencies
-2. README with quickstart
-3. Troubleshooting guide
-4. Integration tests (Telegram mock → ClaudeClaw → response)
+**Goal:** Scheduled tasks running and delivering results to Telegram.
 
-## Key Decisions
+1. Configure ClaudeClaw heartbeat:
+   - Interval: 30 minutes (or custom)
+   - Active hours: 8am–10pm
+   - Checklist prompt: review recent activity, pending tasks, alerts
+   - Delivery target: Telegram chat
 
-### Why compose instead of build?
+2. Add cron jobs via ClaudeClaw:
+   - Daily standup (9am): invoke `/standup` skill
+   - Hourly health check: verify services, report anomalies
+   - Weekly review: summarize week's activity
 
-| Factor | Build from scratch | Compose existing |
-|---|---|---|
-| Code to write | 3-5k lines | ~800 lines |
-| Time | 17 days | 5 days |
-| Telegram/Discord | Build from scratch | Already working |
-| Memory/RAG | Build from scratch | Already working (28 MCP tools) |
-| Cron/heartbeat | Build from scratch | Already working |
-| Web dashboard | Not planned | Free (ClaudeClaw) |
-| Maintenance | All on us | Shared with upstream |
-| Risk | Medium (new code) | Low (proven projects) |
+3. Test: wait for heartbeat tick → verify delivery to Telegram
+4. Test: manually trigger cron job → verify execution and delivery
 
-### Why not just use ClaudeClaw directly?
+**Validation:** Scheduled tasks run and deliver results without intervention.
 
-You could! OpenClaude adds three things:
-1. **Slack support** (ClaudeClaw only has Telegram + Discord)
-2. **Vector memory** (ClaudeClaw uses native CLAUDE.md memory only)
-3. **Unified configuration** (one config instead of three separate tool configs)
+### Phase 5: Setup Script + Documentation (Day 3)
 
-If you don't need Slack and flat-file memory is sufficient, just install ClaudeClaw
-and ClawMem separately. OpenClaude is the opinionated composition layer.
+**Goal:** Reproducible one-command setup.
 
-### What if ClaudeClaw doesn't support channel extensions?
+1. Write `scripts/setup.sh`:
+   ```bash
+   #!/bin/bash
+   # Install ClaudeClaw
+   claude plugin marketplace add moazbuilds/claudeclaw
+   claude plugin install claudeclaw
 
-Fallback plan: write a minimal standalone Slack daemon (~300 lines) that:
-1. Receives Slack messages via `@slack/bolt` Socket Mode
-2. Spawns `claude -p` with `--session-id` / `--resume`
-3. Sends response back to Slack
-4. Stores session map in JSON file
+   # Install ClawMem
+   npm install -g clawmem
+   clawmem bootstrap ~/.openclaude/memory --name openclaude
+   clawmem setup hooks
+   clawmem setup mcp
 
-This is the irreducible minimum. No process pool, no cron, no memory — those come
-from ClaudeClaw and ClawMem.
+   # Copy .claude/ config files
+   cp -r .claude/ ~/.claude/  # or symlink
 
-### When does native Claude Code Channels replace this?
+   echo "Run /claudeclaw:start in a Claude Code session to begin."
+   ```
 
-When all of these are true:
-- Channels exits research preview (stable API)
-- Slack support added (currently Telegram + Discord only)
-- Daemon/headless mode (currently requires open terminal)
-- Node.js support (currently Bun-only)
+2. Write `docs/setup.md`:
+   - Prerequisites (Claude Code, Bun, Telegram bot token)
+   - Step-by-step setup
+   - Configuration options
+   - Troubleshooting
 
-At that point, OpenClaude's channel adapters can be deleted entirely, and the
-project becomes purely `.claude/` configuration files.
+3. Test: fresh machine → run setup → working bot
 
-## Dependencies (v2)
+**Validation:** Clean setup in < 10 minutes.
+
+## Migration from v1
+
+1. Export v1 memory: `clawmem bootstrap ~/.openclaude/memory --name openclaude`
+2. Copy v1 skills to `.claude/skills/` (rename `SKILL.md` files if format differs)
+3. Run `scripts/setup.sh`
+4. Delete all of `src/` — no longer needed
+5. Delete unused deps from `package.json`
+
+## What Gets Deleted from v1
+
+**All of `src/`** — 35k lines, 97 test files:
+
+- `src/engine/` — spawn, pool, sessions, system-prompt, subagents, model
+- `src/gateway/` — HTTP server, auth, rate limiting, service management
+- `src/router/` — dispatch logic
+- `src/channels/` — Telegram + Slack adapters
+- `src/cron/` — scheduler, heartbeat, store
+- `src/memory/` — embeddings, hybrid search, SQLite, all providers
+- `src/skills/` — loader, commands
+- `src/mcp/` — gateway tools server
+- `src/tools/` — MCP tool implementations
+- `src/config/` — schema, loader, types
+- `src/cli/` — command handlers
+- `src/wizard/` — onboarding
+- `src/logging/` — logger, diagnostics
+- `src/integration/` — integration tests
+
+**Keep:**
+- `.claude/` — all config files (this IS the project now)
+- `docs/` — architecture plans, setup guide
+- `scripts/setup.sh` — installation script
+- `CLAUDE.md` (root) — project-level instructions
+
+## Future: Adding Slack
+
+When Slack is needed, three options in priority order:
+
+1. **ClaudeClaw adds Slack support** — just configure it (0 lines)
+2. **Claude Code Channels adds Slack** — use native plugin (0 lines)
+3. **Standalone Slack bridge** — ~300 lines:
+   ```typescript
+   // Minimal Slack → Claude Code bridge
+   const app = new App({ token, appToken, socketMode: true })
+   const sessions = new Map<string, string>()  // channelKey → sessionId
+
+   app.message(async ({ message, say }) => {
+     const key = `${message.channel}:${message.user}`
+     const sessionId = sessions.get(key) ?? crypto.randomUUID()
+     const flag = sessions.has(key) ? '--resume' : '--session-id'
+
+     const result = await spawn('claude', ['-p', flag, sessionId,
+       '--output-format', 'stream-json'], { input: message.text })
+
+     sessions.set(key, sessionId)
+     await say(extractResult(result))
+   })
+   ```
+
+## Dependencies
 
 ```
-Production:
-  @slack/bolt              # Slack adapter (only new dep)
-  zod                      # Config validation
+Production: none (all config files)
 
 External (installed separately):
   ClaudeClaw plugin        # Daemon + Telegram/Discord + cron
   ClawMem                  # Vector memory MCP server
 
-Dev:
-  typescript
-  vitest
-  tsdown
-  oxlint
-  oxfmt
+Requires:
+  Claude Code CLI          # The AI engine
+  Bun                      # Required by ClaudeClaw and ClawMem
+  Node.js                  # For setup script
 ```
-
-**Total new production deps: 2** (down from 15).
-
-## Migration Path from v1
-
-1. `openclaude setup` — installs ClaudeClaw + ClawMem
-2. Migrate `~/.openclaude/config.json` → new unified format (automated)
-3. Migrate `~/.openclaude/memory/` → ClawMem vault (run `clawmem bootstrap ~/.openclaude/memory`)
-4. Migrate `~/.openclaude/skills/` → `.claude/skills/` (copy SKILL.md files)
-5. Delete `~/.openclaude/` except config + memory vault
-6. Delete all of `src/` except Slack adapter and config bridge
-
-## Risk Assessment
-
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| ClaudeClaw abandoned/unmaintained | Low | High | Fork; it's 369 stars and active |
-| ClawMem incompatible with our needs | Low | Medium | It's an MCP server; can swap for our own |
-| ClaudeClaw doesn't support Slack extension | Medium | Low | Standalone Slack daemon fallback (~300 lines) |
-| Claude Code Channels replaces everything | Medium | Positive | Less code to maintain; migrate when stable |
-| Bun dependency (ClaudeClaw) | Low | Low | Bun is stable; or fork to Node |
 
 ## Summary
 
-**OpenClaude v1**: 35k lines, custom runtime wrapping Claude Code.
-**OpenClaude v2**: ~800 lines, configuration layer composing ClaudeClaw + ClawMem + Slack.
-
-The 97% reduction in code comes from recognizing that the ecosystem caught up.
-The right move is to compose, not compete.
+| | OpenClaude v1 | OpenClaude v2 |
+|---|---|---|
+| **Lines of code** | 35,000 | 0 (config files only) |
+| **Test files** | 97 | 0 (nothing to test) |
+| **Dependencies** | 15 | 0 (external tools) |
+| **Setup time** | 30+ minutes | < 10 minutes |
+| **Maintenance** | High (every Claude Code update) | Near-zero |
+| **Telegram** | Custom adapter | ClaudeClaw |
+| **Memory** | Custom hybrid search | ClawMem |
+| **Cron** | Custom scheduler | ClaudeClaw |
+| **Skills** | Custom loader | Native `.claude/skills/` |
+| **Sessions** | Custom management | Native Claude Code |
