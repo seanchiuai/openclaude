@@ -213,12 +213,40 @@ and zero cloud dependency.
 ### Component Responsibilities
 
 **ClaudeClaw** (plugin — daemon + channels + scheduling):
-- Background daemon (launchd/systemd)
-- Telegram adapter with streaming
-- Cron scheduler with timezone support
+- Background Bun process (managed via PID file)
+- Telegram + Discord adapters
+- Cron scheduler with timezone support + exclude windows
 - Heartbeat (periodic checklist review + proactive action)
-- Web dashboard for monitoring
-- Routes messages to the correct agent directory (CWD selection)
+- Web dashboard at configurable port
+- Session management via SQLite (session IDs, turn counts, compact tracking)
+- Model routing (agentic mode with task-type detection)
+
+**How ClaudeClaw spawns Claude Code** (verified from source):
+```
+Bun.spawn(["claude", "-p", prompt,
+  "--output-format", "json|text",
+  "--dangerously-skip-permissions",
+  "--append-system-prompt", "<identity + CLAUDE.md>",
+  "--resume", sessionId           // on subsequent messages
+])
+```
+- Uses raw `claude -p` CLI — NOT the Agent SDK
+- Injects workspace identity via `--append-system-prompt` on EVERY call
+  (because `--append-system-prompt` does not persist across `--resume`)
+- Reads IDENTITY.md, USER.md, SOUL.md from its `prompts/` directory
+- Also reads project-level `CLAUDE.md` and appends it
+- Manages sessions internally (JSON output on first call to capture session_id,
+  then `--resume` on subsequent calls)
+- Serial queue prevents concurrent `--resume` on same session
+- Auto-compact on timeout (exit 124)
+- Fallback model on rate limit
+- `--dangerously-skip-permissions` works with Pro/Max subscription (verified)
+
+**Multi-agent: concurrent operation confirmed:**
+- Each agent = separate ClaudeClaw process started from different CWD
+- Each needs its own Telegram bot token (one bot per agent)
+- Sessions isolated by CWD (different `~/.claude/projects/<encoded-cwd>/`)
+- Same Hindsight instance shared (needs tenant isolation — see Known Issues)
 
 **Hindsight** (MCP server — advanced memory):
 - **Retain**: store facts, experiences, and mental models
@@ -240,15 +268,28 @@ and zero cloud dependency.
 - CLAUDE.md + `@import` — loads workspace identity files
 - Rules — path-scoped instructions
 
-**OpenClaude** (config + workspace, zero runtime code):
+**OpenClaude** (config + workspace + ~300 lines of operational scripts):
 - Source repo provides default templates for workspace files + Claude Code config
 - `scripts/setup.sh` creates agent directories under `~/.openclaude/agents/`
 - Each agent is fully self-contained: `.claude/` + `workspace/`
-- Agents are independent — no shared state, no coupling
+- Agents are organizationally independent (separate folders, separate sessions)
+- Operational scripts for: health checks, memory governance, export/import, auto-retention
 
-### How @import Bridges the Two Systems
+### How Identity Gets Loaded (Two Paths)
 
-CLAUDE.md in each agent's `.claude/` is a thin bridge file:
+**Path 1: Interactive session** (`cd ~/.openclaude/agents/nova && claude`)
+- Claude Code reads `.claude/CLAUDE.md` from CWD
+- `@import` pulls workspace files into context
+- Native skills, agents, rules from `.claude/` load normally
+
+**Path 2: ClaudeClaw daemon** (background process)
+- ClaudeClaw starts with CWD = `~/.openclaude/agents/nova/`
+- Reads its own `prompts/` files (IDENTITY.md, USER.md, SOUL.md)
+- Reads project-level CLAUDE.md
+- Injects all via `--append-system-prompt` on every `claude -p` call
+
+**Both paths result in the same identity.** The CLAUDE.md bridge file
+uses `@import` for interactive use:
 
 ```markdown
 # ~/.openclaude/agents/nova/.claude/CLAUDE.md
@@ -266,9 +307,9 @@ rules are defined in your workspace files.
 @../workspace/MEMORY.md
 ```
 
-Claude Code reads CLAUDE.md → resolves `@import` paths relative to `.claude/` →
-inlines workspace files into context. The workspace files are the living
-documents that define the agent. CLAUDE.md itself rarely changes.
+ClaudeClaw also injects workspace files via `--append-system-prompt`, ensuring
+identity persists across `--resume` calls (since `@import` in CLAUDE.md doesn't
+re-inject on resume, but `--append-system-prompt` does).
 
 ### Workspace Files (from OpenClaw)
 
@@ -333,6 +374,120 @@ inferred from natural language queries ("everything from today") rather than
 explicit date-range API parameters. This is sufficient for daily log generation —
 it's a digest, not an audit trail.
 
+## Known Issues & Mitigations
+
+Identified by independent review from Gemini, Claude Opus, and Codex/GPT-5.4.
+
+### 1. CWD Identity Loss (when working on projects)
+
+**Problem:** When an agent `cd`s into a project repo, the project's `.claude/`
+overrides the agent's. The agent loses its identity, skills, and workspace.
+
+**Mitigation:** ClaudeClaw never `cd`s — it stays in the agent directory and
+injects identity via `--append-system-prompt`. For interactive use, the agent
+works on projects via absolute paths or spawns a `coder` subagent. The agent's
+home directory remains its CWD.
+
+**Tradeoff:** The agent doesn't pick up project-specific `.claude/` config
+(rules, skills) from repos it works on. This is acceptable for a general-purpose
+assistant. For deep coding work on a specific project, use Claude Code directly
+from that project directory instead of through the assistant.
+
+### 2. Hindsight Multi-Agent Isolation
+
+**Problem:** All agents share one Hindsight instance. No tenant enforcement.
+
+**Fix:** Use Hindsight's `bank_id` parameter — each agent gets its own memory
+bank. Configure in each agent's `.mcp.json`:
+```json
+{
+  "mcpServers": {
+    "hindsight": {
+      "type": "http",
+      "url": "http://localhost:8888/mcp/nova"
+    }
+  }
+}
+```
+If Hindsight doesn't support per-bank URL routing, fall back to separate
+containers per agent on different ports.
+
+### 3. Memory Retention Reliability
+
+**Problem:** Relying on the agent to call `retain` is voluntary compliance.
+
+**Fix:** Claude Code `Stop` hook triggers `scripts/auto-retain.sh`, which reads
+the session transcript and calls Hindsight's HTTP API to retain extracted facts.
+This is deterministic — happens on every session end regardless of agent behavior.
+
+**Custom code:** ~40 lines of bash.
+
+### 4. MEMORY.md Governance
+
+**Problem:** Agent-edited file grows unbounded, bloats context window.
+
+**Fix:**
+- Hard cap: 50 lines maximum, enforced by `PreToolUse` hook on Write/Edit
+- Immutable files: IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md — agent cannot edit
+- Mutable files: USER.md, MEMORY.md — agent can edit within limits
+- Hook script: `scripts/check-memory-size.sh` (~15 lines)
+
+### 5. Nightly Log Determinism
+
+**Problem:** NLP-based temporal recall is probabilistic, not exact.
+
+**Mitigation:** Daily logs are explicitly framed as **digests for humans**, not
+reliable archives. Hindsight is the system of record. The nightly cron prompt is
+made explicit: "List every memory retained between {start} and {end} for bank
+{agent_name}. Do not summarize. List each one."
+
+### 6. cron-worker Permission Contradiction
+
+**Problem:** cron-worker defined as read-only but needs to write daily logs.
+
+**Fix:** Rename to `cron-worker.md` with Write access scoped to
+`workspace/memory/` only. Document in the agent definition that it has narrow
+write access, not full write.
+
+### 7. ClaudeClaw Dependency Risk
+
+**Mitigation:**
+- ClaudeClaw's core is ~550 lines of TypeScript. If abandoned, it can be forked
+  or replaced with a minimal daemon (~100 lines) using the same `claude -p` pattern
+- System-level cron (`crontab`) as backup for scheduled tasks
+- `scripts/fallback-daemon.sh` (~80 lines) as emergency Telegram bot
+
+### 8. Error Handling
+
+**Fix:** System-level health monitoring (not dependent on ClaudeClaw):
+```crontab
+*/5 * * * * curl -sf http://localhost:8888/health || docker restart hindsight
+```
+- `@import` failure: rule in `safety.md` instructs agent to alert if workspace
+  files are missing from context
+- ClaudeClaw failure: system crontab checks PID file, restarts if dead
+
+### 9. Portability
+
+**Fix:** `scripts/export-agent.sh` bundles agent folder + Hindsight DB dump +
+credentials checklist. `scripts/import-agent.sh` restores on new machine.
+Portability = "restorable from manifest," not just "copy folder."
+
+## Operational Scripts (~300 lines total)
+
+| Script | Purpose | Lines (est.) |
+|---|---|---|
+| `setup.sh` | Create new agent from templates | 30 |
+| `uninstall.sh` | Remove agent | 10 |
+| `auto-retain.sh` | Stop hook: extract + retain from session transcript | 40 |
+| `check-memory-size.sh` | PreToolUse hook: enforce MEMORY.md 50-line cap | 15 |
+| `health-check.sh` | System cron: verify Hindsight + ClaudeClaw alive | 20 |
+| `export-agent.sh` | Bundle agent + Hindsight data for migration | 40 |
+| `import-agent.sh` | Restore agent on new machine | 30 |
+| `fallback-daemon.sh` | Emergency Telegram bot if ClaudeClaw breaks | 80 |
+
+**35,000 lines → ~300 lines of operational scripts. Not zero, but honest.**
+
 ## Project Structure
 
 **Source repo** (what you clone/maintain):
@@ -371,6 +526,12 @@ openclaude/
   scripts/
     setup.sh                  # Create agent from templates
     uninstall.sh              # Remove agent
+    auto-retain.sh            # Stop hook: extract + retain memories
+    check-memory-size.sh      # PreToolUse hook: enforce MEMORY.md cap
+    health-check.sh           # System cron: verify services alive
+    export-agent.sh           # Bundle agent for migration
+    import-agent.sh           # Restore agent on new machine
+    fallback-daemon.sh        # Emergency Telegram bot
 
   docs/
     setup.md                  # Manual setup guide
@@ -395,7 +556,7 @@ openclaude/
     │   │   └── remind/SKILL.md             # Reminders
     │   │
     │   ├── agents/
-    │   │   ├── cron-worker.md              # Read-only subagent
+    │   │   ├── cron-worker.md              # Read + scoped Write (memory/ only)
     │   │   ├── researcher.md               # Research subagent
     │   │   └── coder.md                    # Coding subagent
     │   │
@@ -424,10 +585,10 @@ openclaude/
         └── ...
 ```
 
-**One agent = one folder. Clone it, back it up, delete it, sync it. No stray
-config elsewhere. Agents are independent — no shared state, no coupling.**
+**One agent = one folder. Back it up with `scripts/export-agent.sh`, restore
+with `scripts/import-agent.sh`. Agents are organizationally independent.**
 
-**Custom runtime code: 0 lines.**
+**Custom runtime code: 0 lines. Operational scripts: ~300 lines of bash.**
 
 ## Implementation Plan
 
@@ -526,7 +687,7 @@ config elsewhere. Agents are independent — no shared state, no coupling.**
    - `remind/SKILL.md` — set reminders, manage personal tasks
 
 2. Create subagents:
-   - `cron-worker.md` — Read, Glob, Grep, Bash only (no writes)
+   - `cron-worker.md` — Read, Glob, Grep, Bash, Write (scoped to workspace/memory/)
    - `researcher.md` — Read, WebSearch, WebFetch only
    - `coder.md` — Full tool access, for project-specific coding tasks
 
@@ -626,26 +787,30 @@ captures the day's Hindsight memories as a human-readable markdown file.
 | Native Channels (when stable) | Replace ClaudeClaw Telegram with official plugin | Config only |
 | Switch memory provider | Swap `.mcp.json` Hindsight entry for Mem0/Supermemory/ClawMem | Config only |
 | Share skills between agents | Copy skill files (intentionally no shared config) | Copy files |
-| Migrate agent to new machine | Copy `~/.openclaude/agents/<name>/` | Copy folder |
+| Migrate agent to new machine | `scripts/export-agent.sh` + `scripts/import-agent.sh` | Run scripts |
 
 ## Summary
 
 | | v1 | v2 |
 |---|---|---|
-| **Lines of code** | 35,000 | 0 |
+| **Runtime code** | 35,000 lines | 0 |
+| **Operational scripts** | (included in runtime) | ~300 lines bash |
 | **Test files** | 97 | 0 |
 | **Production deps** | 15 | 0 |
 | **External tools** | 0 (all custom) | 2 (ClaudeClaw + Hindsight) |
 | **Setup time** | 30+ min | < 15 min |
-| **Maintenance** | High | Near-zero |
+| **Maintenance** | High | Low (scripts + config only) |
 | **Scope** | Project-tied | **General-purpose** (per-agent directories) |
-| **Multi-agent** | No | **Yes** — one folder per agent, fully independent |
-| **Agent portability** | No | **Yes** — copy folder to new machine |
+| **Multi-agent** | No | **Yes** — concurrent, one folder + one Telegram bot per agent |
+| **Agent portability** | No | **Yes** — export/import scripts |
 | **Memory benchmark** | Not tested | 91.4% LongMemEval |
-| **Memory system** | Vector + BM25 (custom) | Hindsight (primary) + nightly cron daily logs (digest) |
+| **Memory system** | Vector + BM25 (custom) | MEMORY.md (cheat sheet) + Hindsight (search) + daily logs (digest) |
+| **Memory capture** | Manual | **Hook-driven** — auto-retain on session end |
 | **Identity model** | Monolithic system prompt | **Layered** — IDENTITY + SOUL + AGENTS + USER + TOOLS |
-| **Telegram** | Custom grammY adapter | ClaudeClaw plugin |
-| **Cron** | Custom croner scheduler | ClaudeClaw plugin |
+| **Identity injection** | Custom system-prompt.ts | ClaudeClaw `--append-system-prompt` + CLAUDE.md `@import` |
+| **Telegram** | Custom grammY adapter | ClaudeClaw plugin (`claude -p` CLI) |
+| **Cron** | Custom croner scheduler | ClaudeClaw cron + system crontab backup |
 | **Skills** | Custom loader | Native `.claude/skills/` |
-| **Sessions** | Custom session-map | Native Claude Code |
+| **Sessions** | Custom session-map | ClaudeClaw SQLite + Claude Code `--resume` |
 | **Bootstrap** | Config wizard | **Conversational** — agent "comes alive" via /bootstrap |
+| **Error handling** | Custom logging | System cron health checks + hook-based alerts |

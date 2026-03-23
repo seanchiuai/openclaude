@@ -43,7 +43,9 @@ echo "prompt" | claude -p --output-format json
 
 # DO NOT USE — will break:
 --input-file                    # doesn't exist
---dangerously-skip-permissions  # forces API auth, breaks Pro subscription
+
+# USE WITH CAUTION:
+--dangerously-skip-permissions  # bypasses all permission prompts (needed for daemon mode)
 ```
 
 - **Output is a JSON array** of events. Extract response: `parsed.findLast(e => e.type === "result").result`
