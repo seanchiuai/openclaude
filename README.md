@@ -84,7 +84,7 @@ templates/
   claude/             # Claude Code config templates
     CLAUDE.md         #   Bridge file (@imports workspace files)
     .mcp.json         #   Hindsight MCP server config
-    settings.json     #   Hooks (auto-retain, memory-size cap)
+    settings.json     #   Hooks (session logging, memory-size cap)
     skills/           #   bootstrap, standup, research, remind
     agents/           #   cron-worker, researcher, coder
     rules/            #   safety, messaging
@@ -92,7 +92,8 @@ templates/
 scripts/
   setup.sh            # Create new agent from templates
   uninstall.sh        # Remove agent (with optional data cleanup)
-  auto-retain.sh      # Stop hook: extract facts → Hindsight
+  log-session.sh       # SessionEnd hook: append session to manifest
+  nightly-memory.sh    # Nightly cron: process transcripts + daily log
   check-memory-size.sh  # PreToolUse hook: enforce 50-line MEMORY.md cap
   health-check.sh     # Cron: verify Hindsight + ClaudeClaw alive
   export-agent.sh     # Bundle agent + memory for migration
@@ -137,13 +138,13 @@ OpenClaude uses a two-tier memory architecture:
 | **Hindsight** (primary) | Long-term semantic memory | Docker container, MCP tools: `retain`, `recall`, `reflect` |
 | **MEMORY.md** (curated) | Critical context always in view | 50-line file, enforced by PreToolUse hook |
 
-The agent calls `retain` during conversations to store facts immediately. A Stop hook (`auto-retain.sh`) acts as a safety net, extracting facts from the session transcript after each conversation.
+The agent calls `retain` during conversations to store facts immediately. A nightly cron (`nightly-memory.sh`) acts as a safety net, processing session transcripts in batch to catch missed facts and generating daily logs.
 
 ### Hooks
 
 | Hook | Trigger | Script | Purpose |
 |------|---------|--------|---------|
-| Stop | Session ends | `auto-retain.sh` | Extract facts from transcript → Hindsight |
+| SessionEnd | Session exits | `log-session.sh` | Append session metadata to manifest for nightly processing |
 | PreToolUse | Write/Edit called | `check-memory-size.sh` | Reject MEMORY.md edits if over 50 lines |
 
 ### Skills
@@ -218,7 +219,8 @@ bats scripts/test/
 
 # Run specific test suite
 bats scripts/test/setup.bats
-bats scripts/test/auto-retain.bats
+bats scripts/test/log-session.bats
+bats scripts/test/nightly-memory.bats
 bats scripts/test/check-memory-size.bats
 bats scripts/test/health-check.bats
 ```
