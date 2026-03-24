@@ -93,6 +93,13 @@ claude
 - **Official** — you want Telegram in an interactive session you're already using
 - **ClaudeClaw** — you want a daemon that runs while you're away (heartbeats, cron jobs, proactive check-ins)
 
+**ClaudeClaw is pre-configured:** Each agent ships with a `claudeclaw/settings.json` template (heartbeat disabled by default, 30min interval, quiet hours 11pm-7am). The `/claudeclaw:start` wizard will walk you through enabling features.
+
+**Extending your agent:**
+- Create skills: `/create-skill` in any interactive session
+- Schedule tasks: `/claudeclaw:jobs create` to add cron jobs
+- Add heartbeat checks: Edit `workspace/HEARTBEAT.md`
+
 ## Multiple Agents
 
 Each agent gets its own Hindsight container on a different port:

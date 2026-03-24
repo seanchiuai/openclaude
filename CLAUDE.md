@@ -14,7 +14,7 @@ General-purpose personal AI assistant built on Claude Code native features + Cla
 ```
 templates/
   workspace/     # Agent identity templates (IDENTITY.md, SOUL.md, AGENTS.md, etc.)
-  claude/        # Claude Code config templates (CLAUDE.md bridge, .mcp.json, skills, agents, rules)
+  claude/        # Claude Code config templates (CLAUDE.md bridge, .mcp.json, skills, agents, rules, claudeclaw)
 
 scripts/
   setup.sh           # Create new agent from templates

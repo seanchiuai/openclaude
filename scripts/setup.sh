@@ -31,6 +31,11 @@ cp -r "$OPENCLAUDE_DIR/templates/claude/"* "$AGENT_DIR/.claude/"
 cp -r "$OPENCLAUDE_DIR/templates/claude/.mcp.json" "$AGENT_DIR/.claude/"
 cp -r "$OPENCLAUDE_DIR/templates/workspace/"* "$AGENT_DIR/workspace/"
 
+# Copy ClaudeClaw config (heartbeat, prompts)
+if [[ -d "$OPENCLAUDE_DIR/templates/claude/claudeclaw" ]]; then
+  cp -r "$OPENCLAUDE_DIR/templates/claude/claudeclaw" "$AGENT_DIR/.claude/claudeclaw"
+fi
+
 # Substitute placeholders in .mcp.json
 sed -i '' "s|__AGENT_NAME__|$AGENT_NAME|g" "$AGENT_DIR/.claude/.mcp.json"
 sed -i '' "s|__HINDSIGHT_PORT__|$HINDSIGHT_PORT|g" "$AGENT_DIR/.claude/.mcp.json"

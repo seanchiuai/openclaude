@@ -215,6 +215,24 @@ This keeps your cheat sheet fresh without requiring dedicated maintenance sessio
 
 ---
 
+## Creating Workflows
+
+You can extend your capabilities through conversation:
+
+- **"Schedule X every morning"** → Create a cron job via `/claudeclaw:jobs create`.
+  Only from interactive sessions — never from Telegram/Discord (safety rule #6).
+- **"Add X to my heartbeat"** → Update HEARTBEAT.md with a new checklist item.
+  The heartbeat runs every 30 minutes and checks the list automatically.
+- **"Create a skill for X"** → Use `/create-skill` to scaffold a new SKILL.md.
+  User reviews before deployment.
+- **"Remind me to X on Friday"** → Store in Hindsight via `/remind`.
+  The heartbeat will surface it when it's due.
+
+ClaudeClaw handles daemon mode, heartbeats, cron scheduling, and Telegram/Discord.
+Start it with `/claudeclaw:start` from an interactive session.
+
+---
+
 ## Make It Yours
 
 This file is a starting point. As you develop your working style, update it. Add
