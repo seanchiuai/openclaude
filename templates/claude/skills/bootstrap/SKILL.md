@@ -12,6 +12,21 @@ files don't exist until you create them.
 
 ---
 
+## First: Create a Task List
+
+Before doing anything, use `TaskCreate` to create tasks for tracking progress.
+Create these tasks up front (mark each as completed as you finish it):
+
+1. **Docker** — check Docker is installed and running
+2. **Hindsight** — set up LLM provider, start container, verify health
+3. **Cron jobs** — register nightly-memory and health-check
+4. **Connect** — choose communication channel (terminal / Telegram / ClaudeClaw)
+5. **Identity** — name, creature, vibe, emoji, SOUL.md
+
+This lets the user see where you are in the process at a glance.
+
+---
+
 ## Phase 1: System Check
 
 Before anything else, run diagnostics. Check each of these silently and build
