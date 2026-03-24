@@ -263,8 +263,13 @@ Tell the user:
 
 - **Default (Telegram + always on) →** Guide them through @BotFather bot creation,
   configure the ClaudeClaw settings (token, user ID, heartbeat, timezone), then
-  **run `/claudeclaw:start` automatically** to launch the daemon. Don't ask the
-  user to run it manually — just do it.
+  **launch the daemon automatically**. Don't ask the user to run it manually.
+
+  To start ClaudeClaw, invoke the `/claudeclaw:start` skill (use the Skill tool
+  with skill name `claudeclaw:start`). This is a ClaudeClaw plugin skill — it
+  launches the daemon process that listens on Telegram, runs heartbeats, and
+  executes cron jobs. After invoking it, verify it's running by checking that the
+  bot responds on Telegram (ask the user to send a test message).
 - **Claude Code only →** Skip connectivity. They can always set it up later by
   running `/bootstrap` again.
 
