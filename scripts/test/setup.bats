@@ -12,6 +12,8 @@ setup() {
   mkdir -p "$TEST_HOME/bin"
   printf '#!/bin/bash\necho "mock docker $*"\n' > "$TEST_HOME/bin/docker"
   chmod +x "$TEST_HOME/bin/docker"
+  # Skip interactive LLM provider prompt in tests
+  export HINDSIGHT_LLM_PROVIDER="skip"
 }
 
 teardown() {
