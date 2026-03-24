@@ -1,5 +1,9 @@
 # OpenClaude v2 — Implementation Gameplan
 
+> **Note:** The memory system (Patch 4) was redesigned after this document was written.
+> The Stop hook + `auto-retain.sh` approach was replaced with a SessionEnd hook + nightly cron.
+> See `2026-03-23-memory-pipeline-redesign.md` for the current memory architecture.
+
 ## Project Name
 
 `openclaude-v2-migration`
