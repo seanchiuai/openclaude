@@ -1,4 +1,4 @@
-# OpenClaude v2 — Setup Guide
+# OpenClaude — Setup Guide
 
 ## Prerequisites
 

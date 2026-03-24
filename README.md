@@ -1,8 +1,8 @@
-# OpenClaude v2
+# OpenClaude
 
 Personal AI assistant framework built on Claude Code native features. Create autonomous, persistent agents with long-term memory — zero custom runtime code.
 
-OpenClaude v2 replaces the original 35k-line TypeScript runtime with a thin bash configuration layer. Each agent is a self-contained directory with identity files, Claude Code config, and a dedicated Hindsight memory container.
+OpenClaude replaces the original 35k-line TypeScript runtime with a thin bash configuration layer. Each agent is a self-contained directory with identity files, Claude Code config, and a dedicated Hindsight memory container.
 
 ## How It Works
 

@@ -1,4 +1,4 @@
-# OpenClaude v2
+# OpenClaude
 
 General-purpose personal AI assistant built on Claude Code native features + ClaudeClaw (daemon/Telegram) + Hindsight (semantic memory). Zero custom runtime code.
 
