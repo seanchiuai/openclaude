@@ -42,7 +42,7 @@ claude --dangerously-skip-permissions
 them, which ports. Then for each agent, you bootstrap it:
 
 ```bash
-cd ~/.openclaude/agents/nova && echo "/bootstrap" | claude --dangerously-skip-permissions -p
+cd ~/.openclaude/agents/nova && claude --dangerously-skip-permissions "/bootstrap"
 ```
 
 `/bootstrap` handles Docker, Hindsight, API keys, cron jobs, connectivity,

@@ -31,7 +31,7 @@ This scaffolds `~/.openclaude/agents/nova/` with:
 ### 2. Run Bootstrap
 
 ```bash
-cd ~/.openclaude/agents/nova && echo "/bootstrap" | claude --dangerously-skip-permissions -p
+cd ~/.openclaude/agents/nova && claude --dangerously-skip-permissions "/bootstrap"
 ```
 
 Bootstrap is the full onboarding wizard. It handles **everything** inside Claude Code:

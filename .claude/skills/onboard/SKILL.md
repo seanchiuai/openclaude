@@ -56,7 +56,7 @@ resolve it — rename, remove the old one, or skip.
 Once all agents are scaffolded, tell the user what to do next. For each agent:
 
 ```bash
-cd ~/.openclaude/agents/AGENT_NAME && echo "/bootstrap" | claude --dangerously-skip-permissions -p
+cd ~/.openclaude/agents/AGENT_NAME && claude --dangerously-skip-permissions "/bootstrap"
 ```
 
 Explain that `/bootstrap` will handle everything else inside Claude Code:
@@ -71,7 +71,7 @@ If they only created one agent, keep it simple:
 
 > "Agent scaffolded. Now run this to finish setup:"
 > ```bash
-> cd ~/.openclaude/agents/AGENT_NAME && echo "/bootstrap" | claude --dangerously-skip-permissions -p
+> cd ~/.openclaude/agents/AGENT_NAME && claude --dangerously-skip-permissions "/bootstrap"
 > ```
 
 If they created multiple agents, list them all with their ports and the
