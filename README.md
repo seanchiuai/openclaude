@@ -27,31 +27,28 @@ Each agent has:
 ### Prerequisites
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- `/bootstrap` will help you install everything else (Docker, LLM provider, etc.)
+- Everything else is handled during onboarding
 
-### Create an Agent
+### Get Started
 
 ```bash
-# Clone the repo
 git clone https://github.com/seanchiuai/openclaude.git
 cd openclaude
+claude
+/onboard
+```
 
-# Scaffold an agent named "nova" (default Hindsight port: 8888)
-./scripts/setup.sh nova
+`/onboard` walks you through creating your agents — how many, what to call
+them, which ports. Then for each agent, you bootstrap it:
 
-# Start a session
+```bash
 cd ~/.openclaude/agents/nova
 claude
-
-# Run onboarding — handles everything:
-# Docker, Hindsight, API keys, cron jobs, identity
 /bootstrap
 ```
 
-`setup.sh` only creates the directory structure. All interactive setup happens
-inside Claude Code via `/bootstrap` — it walks you through Docker installation,
-LLM provider selection, Hindsight health checks, cron registration, and
-(optionally) agent identity discovery.
+`/bootstrap` handles Docker, Hindsight, API keys, cron jobs, connectivity,
+and (optionally) agent identity — all inside Claude Code.
 
 ### Multiple Agents
 
