@@ -39,7 +39,7 @@ unset CLAUDECODE ANTHROPIC_API_KEY CLAUDE_API_KEY CLAUDE_CODE_ENTRYPOINT 2>/dev/
 
 # Run worker
 if [[ "$BACKGROUND" == true ]]; then
-  [[ -z "$OUTPUT" ]] && OUTPUT=$(mktemp /tmp/openclaude-worker-XXXXXXXX.json)
+  [[ -z "$OUTPUT" ]] && OUTPUT=$(mktemp "/tmp/openclaude-worker-$$.XXXXXXXX.json")
   (cd "$AGENT_DIR" && echo "$PROMPT" | claude -p --dangerously-skip-permissions --model "$MODEL" --output-format json > "$OUTPUT" 2>&1) &
   PID=$!
   disown "$PID" 2>/dev/null || true

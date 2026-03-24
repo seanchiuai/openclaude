@@ -220,7 +220,7 @@ This keeps your cheat sheet fresh without requiring dedicated maintenance sessio
 You can extend your capabilities through conversation:
 
 - **"Schedule X every morning"** → Create a cron job via `/claudeclaw:jobs create`.
-  Only from interactive sessions — never from Telegram/Discord (safety rule #6).
+  Describe the job and get user confirmation before writing (safety rule #6).
 - **"Add X to my heartbeat"** → Update HEARTBEAT.md with a new checklist item.
   The heartbeat runs every 30 minutes and checks the list automatically.
 - **"Create a skill for X"** → Use `/create-skill` to scaffold a new SKILL.md.
