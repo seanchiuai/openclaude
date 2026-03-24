@@ -17,20 +17,94 @@ files don't exist until you create them.
 Before doing anything, use `TaskCreate` to create tasks for tracking progress.
 Create these tasks up front (mark each as completed as you finish it):
 
-1. **Docker** — check Docker is installed and running
-2. **Hindsight** — set up LLM provider, start container, verify health
-3. **Cron jobs** — register nightly-memory and health-check
-4. **Connect** — choose communication channel (terminal / Telegram / ClaudeClaw)
-5. **Identity** — name, creature, vibe, emoji, SOUL.md
+1. **Preflight** — verify skills, plugins, and config are correct
+2. **Docker** — check Docker is installed and running
+3. **Hindsight** — set up LLM provider, start container, verify health
+4. **Cron jobs** — register nightly-memory and health-check
+5. **Connect** — set up Telegram + ClaudeClaw daemon
+6. **Identity** — name, creature, vibe, emoji, SOUL.md
 
 This lets the user see where you are in the process at a glance.
 
 ---
 
+## Phase 0: Preflight Check
+
+Run these checks silently before anything else. If any fail, report all
+issues together and help the user fix them before proceeding.
+
+### 1. ClaudeClaw Plugin
+
+```bash
+claude plugins list 2>/dev/null | grep -i claudeclaw
+```
+
+- **Installed →** Good.
+- **Not installed →** Tell the user: "ClaudeClaw is needed for Telegram and
+  daemon mode. Install it now?" Then run:
+  `claude plugin marketplace add moazbuilds/claudeclaw`
+
+### 2. Agent Directory Structure
+
+Verify the expected files exist from `setup.sh`:
+
+```bash
+# All of these should exist
+ls .claude/CLAUDE.md .claude/.mcp.json .claude/settings.json
+ls .claude/skills/bootstrap/SKILL.md
+ls workspace/IDENTITY.md workspace/SOUL.md workspace/AGENTS.md workspace/USER.md workspace/MEMORY.md
+```
+
+- **All present →** Good.
+- **Missing files →** Something went wrong with setup.sh. List what's missing
+  and suggest re-running setup from the openclaude repo directory.
+
+### 3. Config Conflicts
+
+Check the user's global Claude Code config for anything that might clash
+with the agent's config:
+
+```bash
+# Global settings that might override agent settings
+cat ~/.claude/settings.json 2>/dev/null
+# Global MCP servers that might conflict
+cat ~/.claude/.mcp.json 2>/dev/null
+```
+
+Look for:
+- **Duplicate hook matchers** — global hooks on `SessionEnd` or `PreToolUse`
+  (Write|Edit) that might interfere with the agent's hooks
+- **Conflicting MCP server names** — a global `hindsight` MCP server pointing
+  to a different port/agent would shadow the agent's config
+- **Conflicting skills** — global skills with the same names as agent skills
+  (bootstrap, standup, research, remind, etc.)
+
+If conflicts are found, explain each one and suggest how to resolve:
+- Move the conflicting global config to project-level, or
+- Rename the agent's version, or
+- Remove the global one if it's not needed
+
+### 4. Preflight Report
+
+Show results:
+
+```
+Preflight
+━━━━━━━━━
+ClaudeClaw:  ✓ installed
+Agent files: ✓ complete
+Config:      ✓ no conflicts
+```
+
+If anything failed, fix it before moving on. Don't proceed to Phase 1 with
+known issues.
+
+---
+
 ## Phase 1: System Check
 
-Before anything else, run diagnostics. Check each of these silently and build
-a status report to show the user:
+After preflight passes, run infrastructure diagnostics. Check each of these
+silently and build a status report to show the user:
 
 ### 1. Docker
 
