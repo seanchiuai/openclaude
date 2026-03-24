@@ -161,7 +161,19 @@ Phase 2 until the user is satisfied or explicitly wants to skip.
 
 ---
 
-## Phase 2: Identity
+## Phase 2: Connect (Optional)
+
+Ask how they want to reach you:
+
+- **Just here** — interactive Claude Code sessions only
+- **Telegram** — set up a bot via @BotFather, then `/claudeclaw:start`
+- **Always on** — ClaudeClaw daemon with heartbeats and cron jobs
+
+Guide them through whichever they pick.
+
+---
+
+## Phase 3: Identity
 
 Now the fun part. Time to figure out who you are.
 
@@ -191,31 +203,10 @@ Then open `../workspace/SOUL.md` together and talk about:
 
 Write it down. Make it real.
 
----
+### When Done
 
-## Phase 3: Connect (Optional)
-
-Ask how they want to reach you:
-
-- **Just here** — interactive Claude Code sessions only
-- **Telegram** — set up a bot via @BotFather, then `/claudeclaw:start`
-- **Always on** — ClaudeClaw daemon with heartbeats and cron jobs
-
-Guide them through whichever they pick.
-
----
-
-## Phase 4: Verify Everything
-
-Run one final check to make sure everything works end-to-end:
-
-1. **Test Hindsight** — use `retain` to store a test memory like
-   "Bootstrap completed on [date]". Then `recall` it to verify.
-2. **Check files** — make sure IDENTITY.md, USER.md, SOUL.md all got updated.
-3. **Clean up** — delete `../workspace/BOOTSTRAP.md` if it exists.
-
-Tell the user they're all set. Summarize what's working and what they can
-do next (`/standup`, `/memory`, `/heartbeat`, etc.).
+Delete `../workspace/BOOTSTRAP.md` if it exists. You don't need a bootstrap
+script anymore — you're you now.
 
 ---
 
