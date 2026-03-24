@@ -27,8 +27,7 @@ Each agent has:
 ### Prerequisites
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- [Docker](https://docs.docker.com/get-docker/) running (for Hindsight memory)
-- Optional: [ClaudeClaw](https://github.com/synapticlabs/claudeclaw) for daemon mode + Telegram
+- `/bootstrap` will help you install everything else (Docker, LLM provider, etc.)
 
 ### Create an Agent
 
@@ -37,28 +36,22 @@ Each agent has:
 git clone https://github.com/seanchiuai/openclaude.git
 cd openclaude
 
-# Create an agent named "nova" (default Hindsight port: 8888)
+# Scaffold an agent named "nova" (default Hindsight port: 8888)
 ./scripts/setup.sh nova
 
 # Start a session
 cd ~/.openclaude/agents/nova
 claude
 
-# Run the one-time onboarding
+# Run onboarding — handles everything:
+# Docker, Hindsight, API keys, cron jobs, identity
 /bootstrap
 ```
 
-### Verify Memory
-
-Inside the Claude session, test that Hindsight is working:
-
-```
-Remember that my favorite color is blue.
-# Agent calls retain → stored in Hindsight
-
-What's my favorite color?
-# Agent calls recall → retrieves from Hindsight
-```
+`setup.sh` only creates the directory structure. All interactive setup happens
+inside Claude Code via `/bootstrap` — it walks you through Docker installation,
+LLM provider selection, Hindsight health checks, cron registration, and
+(optionally) agent identity discovery.
 
 ### Multiple Agents
 
@@ -90,7 +83,7 @@ templates/
     rules/            #   safety, messaging
 
 scripts/
-  setup.sh            # Create new agent from templates
+  setup.sh            # Scaffold agent directory from templates
   uninstall.sh        # Remove agent (with optional data cleanup)
   log-session.sh       # SessionEnd hook: append session to manifest
   nightly-memory.sh    # Nightly cron: process transcripts + daily log
@@ -151,7 +144,7 @@ The agent calls `retain` during conversations to store facts immediately. A nigh
 
 | Skill | Purpose |
 |-------|---------|
-| `/bootstrap` | One-time onboarding: discover identity, learn about user |
+| `/bootstrap` | Full onboarding: Docker, Hindsight, cron, connectivity, identity |
 | `/standup` | Daily git summary across projects |
 | `/research` | Deep research combining web search + memory recall |
 | `/remind` | Task & reminder management via Hindsight temporal recall |
@@ -183,11 +176,11 @@ Move an agent to another machine:
 
 ### Health Checks
 
-Set up a cron job to auto-restart Hindsight if it goes down:
+Cron jobs are registered automatically during `/bootstrap`. To verify:
 
 ```bash
-# Check every 5 minutes
-*/5 * * * * /path/to/openclaude/scripts/health-check.sh nova 8888
+crontab -l
+# Should show nightly-memory (2am) and health-check (every 5min)
 ```
 
 ### Uninstall
