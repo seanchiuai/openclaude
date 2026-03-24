@@ -197,15 +197,19 @@ Tell the user:
 
 ## Phase 3: Identity (Optional)
 
-Ask the user if they want to set up identity now or later:
+If Telegram was set up in Phase 2, **default to doing identity on Telegram**.
+Tell the user:
 
-> "Everything's up and running. Want to figure out who I am right now, or
-> would you rather do that over Telegram later? (Just run `/bootstrap`
-> again from there.)"
+> "That's the infrastructure done. Identity setup (name, creature, vibe) is
+> more fun over Telegram — start the daemon with `/claudeclaw:start` and I'll
+> walk you through it there. Or we can do it right here if you prefer."
 
-- **Now →** Do the identity setup below.
-- **Later / Telegram →** That's fine. Tell them to run `/bootstrap` in their
-  next session (terminal or Telegram) when they're ready. End here.
+- **Default (Telegram) →** End here. Identity happens in the first Telegram session.
+- **Here instead →** If the user explicitly asks to do it now, do the identity
+  setup below.
+
+If Telegram was **not** set up (Claude Code only), ask if they want to do
+identity now or in a future session.
 
 ### If They Want to Do It Now
 
