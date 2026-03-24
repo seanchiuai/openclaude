@@ -12,8 +12,16 @@ setup() {
   mkdir -p "$TEST_HOME/bin"
   printf '#!/bin/bash\necho "mock docker $*"\n' > "$TEST_HOME/bin/docker"
   chmod +x "$TEST_HOME/bin/docker"
-  # Skip interactive LLM provider prompt in tests
+  # Skip interactive prompts in tests
   export HINDSIGHT_LLM_PROVIDER="skip"
+  export OPENCLAUDE_TIMEZONE="UTC"
+  export OPENCLAUDE_SKIP_CRON="1"
+  # Mock crontab command
+  printf '#!/bin/bash\necho "mock crontab $*"\n' > "$TEST_HOME/bin/crontab"
+  chmod +x "$TEST_HOME/bin/crontab"
+  # Mock curl command (for Hindsight health check)
+  printf '#!/bin/bash\nexit 0\n' > "$TEST_HOME/bin/curl"
+  chmod +x "$TEST_HOME/bin/curl"
 }
 
 teardown() {

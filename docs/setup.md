@@ -4,10 +4,11 @@
 
 - **Docker** — for running Hindsight memory containers
 - **Claude Code CLI** — `claude` command available in PATH
-- **Ollama** — local LLM for Hindsight entity resolution (no API keys needed)
-  - Install: `brew install ollama` or https://ollama.ai
-  - Start: `ollama serve`
-  - Pull a model: `ollama pull llama3.2`
+- **LLM for Hindsight** — entity resolution requires an LLM. Choose one:
+  - **Gemini** (recommended) — free tier at https://ai.google.dev (20 req/day free)
+  - **Groq** — free tier at https://groq.com (fast inference)
+  - **Ollama** — fully local, no API key, but **broken on macOS Tahoe** (Metal shader bug)
+  - **LM Studio** — local alternative to Ollama
 - **ClaudeClaw** (optional) — for daemon mode and Telegram integration
   - `claude plugin marketplace add moazbuilds/claudeclaw`
 
@@ -24,9 +25,11 @@
 ```
 
 This creates `~/.openclaude/agents/nova/` with:
-- `.claude/` — Claude Code config (CLAUDE.md bridge, MCP, hooks, skills, agents, rules)
+- `.claude/` — Claude Code config (CLAUDE.md bridge, MCP, hooks, skills, agents, rules, ClaudeClaw)
 - `workspace/` — Identity files (IDENTITY.md, SOUL.md, AGENTS.md, etc.)
 - A running Hindsight Docker container at `localhost:8888`
+- Cron jobs auto-added (nightly memory at 2am, health check every 5min)
+- Timezone configured for ClaudeClaw cron scheduling
 
 ### 2. Start a Session
 
@@ -142,6 +145,6 @@ Agents are fully isolated — separate identity, separate memory, separate confi
 # Remove agent + all data:
 ./scripts/uninstall.sh nova --remove-data
 
-# Health check (add to crontab):
-*/5 * * * * /path/to/scripts/health-check.sh nova 8888
+# Health check + nightly memory (auto-added by setup.sh):
+# To verify: crontab -l
 ```
