@@ -147,7 +147,7 @@ $CONTENT"
           fi
 
           curl -sf -X POST \
-            "$HINDSIGHT_BASE/v1/default/banks/$AGENT_NAME/memories/retain" \
+            "$HINDSIGHT_BASE/v1/default/banks/$AGENT_NAME/memories" \
             -H "Content-Type: application/json" \
             -d "{\"items\":[{\"content\":$ESCAPED}]}" \
             >> "$LOG_FILE" 2>&1 || log "Failed to POST fact to Hindsight"
