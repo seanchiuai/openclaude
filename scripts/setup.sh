@@ -128,6 +128,54 @@ if [[ "$LLM_PROVIDER" != "skip" ]]; then
   fi
 fi
 
+# ── Docker preflight checks ──
+if [[ "$LLM_PROVIDER" != "skip" ]]; then
+  # Check for stale container with same name
+  if docker ps -a --format '{{.Names}}' | grep -q "^hindsight-$AGENT_NAME$"; then
+    echo ""
+    echo "Found existing container 'hindsight-$AGENT_NAME'."
+    EXISTING_STATUS=$(docker inspect -f '{{.State.Status}}' "hindsight-$AGENT_NAME" 2>/dev/null)
+    if [[ "$EXISTING_STATUS" == "running" ]]; then
+      echo "  Status: running — will reuse it."
+      HINDSIGHT_REUSE=true
+    else
+      echo "  Status: $EXISTING_STATUS — removing stale container..."
+      docker rm -f "hindsight-$AGENT_NAME" >/dev/null 2>&1
+      HINDSIGHT_REUSE=false
+    fi
+  else
+    HINDSIGHT_REUSE=false
+  fi
+
+  # Check for port conflict (only if we need to start a new container)
+  if [[ "$HINDSIGHT_REUSE" == false ]]; then
+    if lsof -i ":$HINDSIGHT_PORT" >/dev/null 2>&1; then
+      BLOCKING_PID=$(lsof -ti ":$HINDSIGHT_PORT" | head -1)
+      BLOCKING_CMD=$(ps -p "$BLOCKING_PID" -o comm= 2>/dev/null || echo "unknown")
+      echo ""
+      echo "Error: Port $HINDSIGHT_PORT is already in use by $BLOCKING_CMD (PID $BLOCKING_PID)."
+      echo "Either stop that process or re-run with a different port:"
+      echo "  setup.sh $AGENT_NAME <other-port>"
+      echo "Continuing without Hindsight — memory features won't be available."
+      LLM_PROVIDER="skip"
+    fi
+  fi
+
+  # Pull image if not available locally
+  if [[ "$LLM_PROVIDER" != "skip" && "$HINDSIGHT_REUSE" == false ]]; then
+    if ! docker image inspect "$HINDSIGHT_IMAGE" >/dev/null 2>&1; then
+      echo ""
+      echo "Pulling Hindsight image (first time only)..."
+      if ! docker pull "$HINDSIGHT_IMAGE"; then
+        echo "Error: Failed to pull $HINDSIGHT_IMAGE"
+        echo "Check your internet connection or Docker Hub access."
+        echo "Continuing without Hindsight — memory features won't be available."
+        LLM_PROVIDER="skip"
+      fi
+    fi
+  fi
+fi
+
 # Start Hindsight Docker container
 if [[ "$LLM_PROVIDER" == "skip" ]]; then
   echo ""
@@ -137,6 +185,8 @@ if [[ "$LLM_PROVIDER" == "skip" ]]; then
   echo "    -e HINDSIGHT_API_LLM_PROVIDER=<provider> \\"
   echo "    -v ~/.hindsight-$AGENT_NAME:/home/hindsight/.pg0 \\"
   echo "    $HINDSIGHT_IMAGE"
+elif [[ "${HINDSIGHT_REUSE:-false}" == true ]]; then
+  echo "Reusing existing Hindsight container."
 else
   echo ""
   echo "Starting Hindsight container (provider: $LLM_PROVIDER)..."
@@ -148,17 +198,21 @@ else
   [[ -n "$LLM_BASE_URL" ]] && DOCKER_ENV_ARGS+=(-e "HINDSIGHT_API_LLM_BASE_URL=$LLM_BASE_URL")
   [[ -n "$LLM_MODEL" ]] && DOCKER_ENV_ARGS+=(-e "HINDSIGHT_API_LLM_MODEL=$LLM_MODEL")
 
-  docker run -d \
+  if ! docker run -d \
     --name "hindsight-$AGENT_NAME" \
     --restart unless-stopped \
     --add-host host.docker.internal:host-gateway \
     -p "$HINDSIGHT_PORT:8888" \
     "${DOCKER_ENV_ARGS[@]}" \
     -v "$HOME/.hindsight-$AGENT_NAME:/home/hindsight/.pg0" \
-    "$HINDSIGHT_IMAGE" 2>/dev/null || {
-      echo "Warning: Could not start Hindsight container."
-      echo "Check: docker logs hindsight-$AGENT_NAME"
-    }
+    "$HINDSIGHT_IMAGE"; then
+      echo ""
+      echo "Error: Could not start Hindsight container."
+      echo "Docker said:"
+      docker logs "hindsight-$AGENT_NAME" 2>&1 | tail -5 || true
+      echo ""
+      echo "The agent will work without Hindsight, but memory features won't be available."
+  fi
 fi
 
 # ── Wait for Hindsight to be healthy ──
