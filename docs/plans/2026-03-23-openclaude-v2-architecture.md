@@ -140,11 +140,11 @@ importAgent(tarballPath: string): void
 - [ ] `/bootstrap` skill triggers and runs an onboarding conversation
 - [ ] `/standup` skill generates a git summary
 - [ ] `cron-worker` subagent has restricted tool access (Read, Glob, Grep, Bash, Write to `workspace/memory/` only)
-- [ ] `auto-retain.sh` (Stop hook) extracts facts from session transcript and retains to Hindsight
+- [ ] `log-session.sh` (SessionEnd hook) appends session metadata to manifest; `nightly-memory.sh` batch-processes transcripts and retains facts to Hindsight
 - [ ] `check-memory-size.sh` (PreToolUse hook) rejects edits that would push MEMORY.md past 50 lines
 - [ ] `health-check.sh` detects down Hindsight container and restarts it
 - [ ] `export-agent.sh` produces a restorable tarball; `import-agent.sh` restores from it
-- [ ] ClaudeClaw starts with CWD = agent directory, Telegram messages get responses with correct identity
+- [ ] Telegram works via official plugin (`--channels`) or ClaudeClaw daemon, both from agent directory
 - [ ] Two agents (nova + atlas) can run concurrently with separate Hindsight containers and Telegram bots
 - [ ] Nightly cron generates `workspace/memory/YYYY-MM-DD.md` from Hindsight temporal recall
 - [ ] All `src/` code is deleted — no custom runtime remains
