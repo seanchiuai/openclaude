@@ -34,7 +34,7 @@ Each agent has:
 ```bash
 git clone https://github.com/seanchiuai/openclaude.git
 cd openclaude
-claude
+claude --dangerously-skip-permissions
 /onboard
 ```
 
@@ -42,9 +42,7 @@ claude
 them, which ports. Then for each agent, you bootstrap it:
 
 ```bash
-cd ~/.openclaude/agents/nova
-claude
-/bootstrap
+cd ~/.openclaude/agents/nova && echo "/bootstrap" | claude --dangerously-skip-permissions -p
 ```
 
 `/bootstrap` handles Docker, Hindsight, API keys, cron jobs, connectivity,

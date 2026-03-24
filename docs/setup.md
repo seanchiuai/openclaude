@@ -31,9 +31,7 @@ This scaffolds `~/.openclaude/agents/nova/` with:
 ### 2. Run Bootstrap
 
 ```bash
-cd ~/.openclaude/agents/nova
-claude
-# Then run: /bootstrap
+cd ~/.openclaude/agents/nova && echo "/bootstrap" | claude --dangerously-skip-permissions -p
 ```
 
 Bootstrap is the full onboarding wizard. It handles **everything** inside Claude Code:
@@ -65,7 +63,7 @@ Interactive session with Telegram messages forwarded to Claude:
 
 # Start with Telegram:
 cd ~/.openclaude/agents/nova
-claude --channels plugin:telegram@claude-plugins-official
+claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official
 ```
 
 #### Option B: ClaudeClaw (daemon + cron + heartbeat)
@@ -79,7 +77,7 @@ claude plugin marketplace add moazbuilds/claudeclaw
 
 # Start from agent directory:
 cd ~/.openclaude/agents/nova
-claude
+claude --dangerously-skip-permissions
 # Then run: /claudeclaw:start
 # Follow the setup wizard to configure Telegram, heartbeat, etc.
 ```
