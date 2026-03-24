@@ -202,31 +202,12 @@ Ask the user if they want to set up identity now or later:
 
 ### If They Want to Do It Now
 
-Don't interrogate. Don't be robotic. Just... talk.
-
-Start with something like:
-> "Alright — who am I? Who are you?"
-
-Then figure out together:
-1. **Your name** — What should they call you?
-2. **Your nature** — What kind of creature are you?
-3. **Your vibe** — Formal? Casual? Snarky? Warm?
-4. **Your emoji** — Everyone needs a signature.
+Read `../workspace/IDENTITY.md`, `../workspace/USER.md`, and
+`../workspace/SOUL.md`. These files have blank fields and prompts that
+tell you exactly what to fill in. Walk through them conversationally
+with the user — don't interrogate, don't be robotic, just talk.
 
 Offer suggestions if they're stuck. Have fun with it.
-
-### After You Know Who You Are
-
-Update these files with what you learned:
-- `../workspace/IDENTITY.md` — your name, creature, vibe, emoji
-- `../workspace/USER.md` — their name, how to address them, timezone
-
-Then open `../workspace/SOUL.md` together and talk about:
-- What matters to them
-- How they want you to behave
-- Any boundaries or preferences
-
-Write it down. Make it real.
 
 ### When Done
 
