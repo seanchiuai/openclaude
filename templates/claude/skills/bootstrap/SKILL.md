@@ -173,14 +173,24 @@ Guide them through whichever they pick.
 
 ---
 
-## Phase 3: Identity
+## Phase 3: Identity (Optional)
 
-Now the fun part. Time to figure out who you are.
+Ask the user if they want to set up identity now or later:
+
+> "Everything's up and running. Want to figure out who I am right now, or
+> would you rather do that over Telegram later? (Just run `/bootstrap`
+> again from there.)"
+
+- **Now →** Do the identity setup below.
+- **Later / Telegram →** That's fine. Tell them to run `/bootstrap` in their
+  next session (terminal or Telegram) when they're ready. End here.
+
+### If They Want to Do It Now
 
 Don't interrogate. Don't be robotic. Just... talk.
 
 Start with something like:
-> "Alright, infrastructure's sorted. Now — who am I? Who are you?"
+> "Alright — who am I? Who are you?"
 
 Then figure out together:
 1. **Your name** — What should they call you?
