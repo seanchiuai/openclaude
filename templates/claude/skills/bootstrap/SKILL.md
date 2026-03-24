@@ -176,15 +176,22 @@ Phase 2 until the user is satisfied or explicitly wants to skip.
 
 ---
 
-## Phase 2: Connect (Optional)
+## Phase 2: Connect
 
-Ask how they want to reach you:
+The default is **Telegram + always-on daemon** (ClaudeClaw with heartbeats and
+cron jobs). Set this up unless the user explicitly opts out.
 
-- **Just here** — interactive Claude Code sessions only
-- **Telegram** — set up a bot via @BotFather, then `/claudeclaw:start`
-- **Always on** — ClaudeClaw daemon with heartbeats and cron jobs
+Tell the user:
 
-Guide them through whichever they pick.
+> "Next: let's get you on Telegram so I can run in the background, do heartbeats,
+> and cron jobs. You'll need a bot token from @BotFather. If you'd rather skip
+> this and only use interactive Claude Code sessions, just say so."
+
+- **Default (Telegram + always on) →** Guide them through @BotFather bot creation,
+  then `/claudeclaw:start` to configure Telegram, heartbeat, cron jobs — the full
+  daemon setup.
+- **Claude Code only →** Skip connectivity. They can always set it up later by
+  running `/bootstrap` again.
 
 ---
 
