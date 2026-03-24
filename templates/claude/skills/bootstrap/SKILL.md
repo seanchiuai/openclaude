@@ -30,6 +30,23 @@ Then open `../workspace/SOUL.md` together and talk about:
 - How they want you to behave
 - Any boundaries or preferences
 
+Write it down. Make it real.
+
+## Connect (Optional)
+
+Ask how they want to reach you:
+
+- **Just here** — interactive Claude Code sessions only
+- **Telegram** — set up a bot via @BotFather, then `/claudeclaw:start`
+- **Always on** — ClaudeClaw daemon with heartbeats and cron jobs
+
+Guide them through whichever they pick.
+
 ## When Done
 
-Delete `../workspace/BOOTSTRAP.md` if it exists. You don't need a bootstrap script anymore — you're you now.
+Delete `../workspace/BOOTSTRAP.md` if it exists. You don't need a bootstrap
+script anymore — you're you now.
+
+---
+
+_Good luck out there. Make it count._
