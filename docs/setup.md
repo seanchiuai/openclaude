@@ -1,0 +1,150 @@
+# OpenClaude v2 — Setup Guide
+
+## Prerequisites
+
+- **Docker** — for running Hindsight memory containers
+- **Claude Code CLI** — `claude` command available in PATH
+- **LLM for Hindsight** — entity resolution requires an LLM. Choose one:
+  - **Gemini** (recommended) — free tier at https://ai.google.dev (20 req/day free)
+  - **Groq** — free tier at https://groq.com (fast inference)
+  - **Ollama** — fully local, no API key, but **broken on macOS Tahoe** (Metal shader bug)
+  - **LM Studio** — local alternative to Ollama
+- **ClaudeClaw** (optional) — for daemon mode and Telegram integration
+  - `claude plugin marketplace add moazbuilds/claudeclaw`
+
+## Quick Start
+
+### 1. Create an Agent
+
+```bash
+# From the openclaude repo directory:
+./scripts/setup.sh nova
+
+# With custom Hindsight port:
+./scripts/setup.sh atlas 8889
+```
+
+This creates `~/.openclaude/agents/nova/` with:
+- `.claude/` — Claude Code config (CLAUDE.md bridge, MCP, hooks, skills, agents, rules, ClaudeClaw)
+- `workspace/` — Identity files (IDENTITY.md, SOUL.md, AGENTS.md, etc.)
+- A running Hindsight Docker container at `localhost:8888`
+- Cron jobs auto-added (nightly memory at 2am, health check every 5min)
+- Timezone configured for ClaudeClaw cron scheduling
+
+### 2. Start a Session
+
+```bash
+cd ~/.openclaude/agents/nova
+claude
+```
+
+Claude will load your agent's identity via the CLAUDE.md bridge file.
+
+### 3. Run Bootstrap
+
+In your first session, run `/bootstrap` to:
+- Choose your agent's name, creature type, vibe, and emoji
+- Set up your human profile (name, timezone, preferences)
+- Customize SOUL.md together
+
+### 4. Verify Hindsight
+
+```bash
+# Check Hindsight is running:
+curl http://localhost:8888/docs
+
+# Test memory from within a Claude session:
+# Use `retain` to store a fact, then `recall` to retrieve it
+```
+
+### 5. Connect Telegram (Optional)
+
+Create a Telegram bot via @BotFather first, then choose one of two options:
+
+#### Option A: Official Anthropic Plugin (simpler)
+
+Interactive session with Telegram messages forwarded to Claude:
+
+```bash
+# Install (once):
+/plugin install telegram@claude-plugins-official
+/reload-plugins
+/telegram:configure YOUR_BOT_TOKEN
+
+# Start with Telegram:
+cd ~/.openclaude/agents/nova
+claude --channels plugin:telegram@claude-plugins-official
+```
+
+#### Option B: ClaudeClaw (daemon + cron + heartbeat)
+
+Background daemon that runs 24/7, with cron jobs and periodic heartbeats:
+
+```bash
+# Install (once):
+claude plugin marketplace add moazbuilds/claudeclaw
+/reload-plugins
+
+# Start from agent directory:
+cd ~/.openclaude/agents/nova
+claude
+# Then run: /claudeclaw:start
+# Follow the setup wizard to configure Telegram, heartbeat, etc.
+```
+
+**When to use which:**
+- **Official** — you want Telegram in an interactive session you're already using
+- **ClaudeClaw** — you want a daemon that runs while you're away (heartbeats, cron jobs, proactive check-ins)
+
+**ClaudeClaw is pre-configured:** Each agent ships with a `claudeclaw/settings.json` template (heartbeat disabled by default, 30min interval, quiet hours 11pm-7am). The `/claudeclaw:start` wizard will walk you through enabling features.
+
+**Extending your agent:**
+- Create skills: `/create-skill` in any interactive session
+- Schedule tasks: `/claudeclaw:jobs create` to add cron jobs
+- Add heartbeat checks: Edit `workspace/HEARTBEAT.md`
+
+## Multiple Agents
+
+Each agent gets its own Hindsight container on a different port:
+
+```bash
+./scripts/setup.sh nova 8888
+./scripts/setup.sh atlas 8889
+```
+
+Agents are fully isolated — separate identity, separate memory, separate config.
+
+## Troubleshooting
+
+### Hindsight won't start
+- Check Docker is running: `docker info`
+- Check port isn't in use: `lsof -i :8888`
+- Check container logs: `docker logs hindsight-nova`
+
+### MCP connection fails
+- Verify Hindsight is running: `curl http://localhost:8888/docs`
+- Check `.claude/.mcp.json` has correct port
+- Restart Claude Code session after fixing config
+
+### Agent identity not loading
+- Verify CLAUDE.md has `@import` directives: `cat ~/.openclaude/agents/nova/.claude/CLAUDE.md`
+- Check workspace files exist: `ls ~/.openclaude/agents/nova/workspace/`
+
+## Agent Management
+
+```bash
+# Export agent (for migration):
+./scripts/export-agent.sh nova
+
+# Import agent (on new machine):
+./scripts/import-agent.sh nova-export-2026-03-23.tar.gz
+
+# Remove agent:
+./scripts/uninstall.sh nova
+
+# Remove agent + all data:
+./scripts/uninstall.sh nova --remove-data
+
+# Health check + nightly memory (auto-added by setup.sh):
+# To verify: crontab -l
+```

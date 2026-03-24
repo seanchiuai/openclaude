@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__OPENCLAUDE_DIR__/scripts/log-session.sh __AGENT_DIR__"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__OPENCLAUDE_DIR__/scripts/check-memory-size.sh $TOOL_INPUT"
+          }
+        ]
+      }
+    ]
+  }
+}

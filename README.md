@@ -1,284 +1,234 @@
-# OpenClaude
+# OpenClaude v2
 
-An open-source autonomous AI assistant powered by Claude Code CLI. Runs on your Claude Pro/Max subscription — no API keys needed.
+Personal AI assistant framework built on Claude Code native features. Create autonomous, persistent agents with long-term memory — zero custom runtime code.
 
-OpenClaude connects to Telegram and Slack, remembers everything, runs scheduled tasks, and messages you proactively. It's not a chatbot wrapper — it's an autonomous agent that uses Claude Code as its brain.
+OpenClaude v2 replaces the original 35k-line TypeScript runtime with a thin bash configuration layer. Each agent is a self-contained directory with identity files, Claude Code config, and a dedicated Hindsight memory container.
 
-## Features
+## How It Works
 
-**Messaging**
-- Telegram (grammY) and Slack (Bolt) — two-way, autonomous communication
-- The agent receives messages AND sends proactively
-- Allow-list access control per channel
-- Long message chunking, media support, thread replies (Slack)
+```
+You ──► Claude Code session ──► Agent directory (~/.openclaude/agents/nova/)
+                                  ├── Identity (SOUL.md, IDENTITY.md, USER.md)
+                                  ├── Memory (Hindsight MCP + curated MEMORY.md)
+                                  ├── Skills (/bootstrap, /standup, /research, /remind)
+                                  └── Subagents (cron-worker, researcher, coder)
+```
 
-**Agent Engine**
-- Spawns `claude -p` subprocesses per task — full Claude Code capabilities
-- Session isolation with unique `--project` paths
-- Process pool with configurable concurrency (default 4) and FIFO queue
-- Wall-clock timeouts with process group cleanup
-
-**Memory**
-- Persistent memory stored as markdown files (human-readable, editable)
-- SQLite + FTS5 + sqlite-vec index for fast search
-- Hybrid search: 70% vector similarity + 30% keyword matching
-- 6 embedding providers (local, OpenAI, Gemini, Voyage, Mistral, Ollama)
-- Temporal decay — recent memories rank higher (30-day half-life)
-- MMR re-ranking for result diversity
-- Auto-flush — saves important info before session ends
-
-**Cron & Heartbeats**
-- Scheduled tasks with cron expressions
-- Two modes: inject into main session or spawn isolated session
-- Heartbeat checklist (`HEARTBEAT.md`) — agent reviews it periodically and acts
-- Proactive messaging — results delivered to any configured channel
-
-**Skills**
-- Markdown playbooks (`SKILL.md` format with YAML frontmatter)
-- Auto-discovery from `~/.openclaude/skills/`
-- Slash command routing — `/skillname` triggers the skill
-- Bring your own workflows
-
-**Subagent Management**
-- `/list` — see running agents
-- `/stop <id>` — kill a specific agent
-- `/status` — pool stats
-- `/help` — command reference
-
-**Integrations**
-- Any MCP server (GitHub, Google Workspace, Supabase, filesystem, etc.)
-- Configured in `config.json`, passed through to Claude Code
-
-## Requirements
-
-- Node.js >= 22
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- Claude Pro or Max subscription
-- pnpm
+Each agent has:
+- **Personality & identity** — name, creature type, vibe, tone, values
+- **Long-term memory** — semantic search via Hindsight (Docker container per agent)
+- **Working memory** — curated 50-line MEMORY.md cheat sheet, always in context
+- **Skills & subagents** — onboarding, daily standups, research, reminders, background workers
+- **Safety rules** — no exfiltration, ask before destructive ops, trash instead of delete
+- **Optional Telegram** — via ClaudeClaw daemon plugin
 
 ## Quick Start
 
+### Prerequisites
+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- [Docker](https://docs.docker.com/get-docker/) running (for Hindsight memory)
+- Optional: [ClaudeClaw](https://github.com/synapticlabs/claudeclaw) for daemon mode + Telegram
+
+### Create an Agent
+
 ```bash
-# 1. Clone and install
-git clone https://github.com/yourusername/openclaude.git
+# Clone the repo
+git clone https://github.com/seanchiuai/openclaude.git
 cd openclaude
-pnpm install
-pnpm build
 
-# 2. Run the onboarding wizard
-openclaude onboard
+# Create an agent named "nova" (default Hindsight port: 8888)
+./scripts/setup.sh nova
+
+# Start a session
+cd ~/.openclaude/agents/nova
+claude
+
+# Run the one-time onboarding
+/bootstrap
 ```
 
-The wizard walks you through:
-1. Checking that Claude Code CLI is installed and authenticated
-2. Connecting channels (Telegram, Slack, both, or neither)
-3. Choosing a memory/embedding provider
-4. Creating `~/.openclaude/` with all config and directories
-5. Optionally starting the gateway
+### Verify Memory
 
-To get a Telegram bot token, talk to [@BotFather](https://t.me/BotFather). To restrict access, add `"allowFrom": ["YOUR_TELEGRAM_USER_ID"]` to your config — get your ID from [@userinfobot](https://t.me/userinfobot).
+Inside the Claude session, test that Hindsight is working:
 
-### Manual setup (alternative)
+```
+Remember that my favorite color is blue.
+# Agent calls retain → stored in Hindsight
 
-If you prefer to configure manually:
+What's my favorite color?
+# Agent calls recall → retrieves from Hindsight
+```
+
+### Multiple Agents
+
+Each agent gets its own Hindsight container on a different port:
 
 ```bash
-openclaude setup        # Creates directories + minimal config
-vi ~/.openclaude/config.json  # Add your channel tokens
-openclaude start        # Start the gateway
+./scripts/setup.sh nova 8888
+./scripts/setup.sh aria 8889
 ```
 
-## Configuration
+## Project Layout
 
-Config lives at `~/.openclaude/config.json`. Environment variables are expanded (`$VAR`, `${VAR}`, `${VAR:-default}`).
+```
+templates/
+  workspace/          # Agent identity templates
+    IDENTITY.md       #   Name, creature, vibe, emoji
+    SOUL.md           #   Persona, tone, values, boundaries
+    AGENTS.md         #   Operating rules, memory policy, red lines
+    USER.md           #   Human's preferences
+    TOOLS.md          #   Local environment (SSH hosts, devices)
+    HEARTBEAT.md      #   Periodic checklist
+    MEMORY.md         #   Curated cheat sheet (50-line cap)
+  claude/             # Claude Code config templates
+    CLAUDE.md         #   Bridge file (@imports workspace files)
+    .mcp.json         #   Hindsight MCP server config
+    settings.json     #   Hooks (session logging, memory-size cap)
+    skills/           #   bootstrap, standup, research, remind
+    agents/           #   cron-worker, researcher, coder
+    rules/            #   safety, messaging
 
-```jsonc
-{
-  // Messaging channels — only include channels you're using
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "botToken": "your-bot-token",    // or "$TELEGRAM_BOT_TOKEN"
-      "allowFrom": ["123456789"],      // Telegram user IDs (omit to allow all)
-      "mode": "polling"                // "polling" or "webhook"
-    },
-    "slack": {
-      "enabled": true,
-      "botToken": "$SLACK_BOT_TOKEN",
-      "appToken": "$SLACK_APP_TOKEN",
-      "mode": "socket",               // "socket" or "http"
-      "allowFrom": ["U1234567"]       // Slack user IDs (omit to allow all)
-    }
-  },
+scripts/
+  setup.sh            # Create new agent from templates
+  uninstall.sh        # Remove agent (with optional data cleanup)
+  log-session.sh       # SessionEnd hook: append session to manifest
+  nightly-memory.sh    # Nightly cron: process transcripts + daily log
+  check-memory-size.sh  # PreToolUse hook: enforce 50-line MEMORY.md cap
+  health-check.sh     # Cron: verify Hindsight + ClaudeClaw alive
+  export-agent.sh     # Bundle agent + memory for migration
+  import-agent.sh     # Restore agent on new machine
+  test/               # Bats test suites
 
-  // Agent engine
-  "agent": {
-    "maxConcurrent": 4,               // Max parallel Claude processes
-    "defaultTimeout": 300000           // 5 min timeout per task
-  },
-
-  // Heartbeat
-  "heartbeat": {
-    "enabled": true,
-    "every": 1800000,                 // 30 minutes
-    "target": {
-      "channel": "telegram",
-      "chatId": "123456789"
-    }
-  },
-
-  // Cron
-  "cron": {
-    "enabled": true
-  },
-
-  // Memory
-  "memory": {
-    "dbPath": "~/.openclaude/memory/openclaude.sqlite"
-  },
-
-  // MCP servers (passed through to Claude Code)
-  "mcp": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "$GITHUB_TOKEN" }
-    }
-  }
-}
+docs/
+  setup.md            # Detailed setup guide + troubleshooting
+  plans/              # Architecture docs
 ```
 
-**Important:** Only include channel blocks you're actually using. Omit the entire `slack` block if you only use Telegram (and vice versa). Env vars like `$SLACK_BOT_TOKEN` will fail if not set, even when the channel is disabled.
+### Installed Agent Structure
 
-## CLI
-
-```bash
-openclaude onboard        # Interactive setup wizard (first-time)
-openclaude setup          # Non-interactive setup (directories + minimal config)
-openclaude start          # Start the daemon
-openclaude stop           # Stop the daemon
-openclaude status         # Show running status and pool stats
-openclaude skills list    # List loaded skills
-openclaude memory search  # Search memory from CLI
-openclaude logs           # Tail gateway logs
 ```
-
-## Chat Commands
-
-Send these to your bot in Telegram or Slack:
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show available commands |
-| `/list` | List running agent sessions |
-| `/stop <id>` | Kill a running session |
-| `/status` | Pool stats (running, queued, max) |
-| `/skills` | List available skills |
-| `/cron list` | List scheduled jobs |
-| `/cron add` | Add a cron job |
-| `/cron remove` | Remove a cron job |
-
-Any non-command message is routed to Claude Code for an autonomous response.
-
-## Skills
-
-Drop a `SKILL.md` file in `~/.openclaude/skills/` to add a skill:
-
-```markdown
----
-name: daily-standup
-description: Generate a daily standup summary
-triggers:
-  - /standup
----
-
-Review my recent git commits, calendar events, and open PRs.
-Summarize what I did yesterday, what I'm doing today, and any blockers.
-Keep it concise — 3 bullets max per section.
+~/.openclaude/agents/nova/
+  .claude/
+    CLAUDE.md             # Bridge: @imports workspace files
+    .mcp.json             # Hindsight MCP server
+    settings.json         # Hooks config
+    skills/               # /bootstrap, /standup, /research, /remind
+    agents/               # cron-worker, researcher, coder
+    rules/                # safety, messaging
+  workspace/
+    IDENTITY.md           # Agent's discovered identity
+    SOUL.md               # Core persona & values
+    AGENTS.md             # Operating rules & memory policy
+    USER.md               # Your preferences (built over time)
+    TOOLS.md              # Environment specifics
+    HEARTBEAT.md          # Periodic tasks
+    MEMORY.md             # Curated cheat sheet (50-line cap)
+    memory/               # Daily logs (auto-generated)
 ```
-
-Trigger it by sending `/standup` to your bot.
-
-## Heartbeat
-
-Create `~/.openclaude/HEARTBEAT.md` with a checklist:
-
-```markdown
-# Heartbeat Checklist
-
-- [ ] Check if any GitHub PRs need review
-- [ ] Check if any scheduled deploys are coming up
-- [ ] Summarize unread Slack messages in #engineering
-```
-
-The agent reviews this periodically and messages you if there's anything worth reporting.
 
 ## Architecture
 
-```
-Telegram/Slack message
-        |
-        v
-   Gateway daemon (Node.js + Hono)
-        |
-        v
-   Fixed router ---- /commands -> direct response
-        |
-        v
-   Process pool (max 4)
-        |
-        v
-   echo "prompt" | claude -p --output-format json
-        |
-        v
-   Parse result event -> channel -> user
-```
+### Memory System
 
-Key design decisions:
-- **CLI, not SDK** — runs on your subscription, no API keys
-- **Fixed routing** — static dispatch, no LLM deciding how to route
-- **Session isolation** — each task gets its own `--project` path
-- **Process pool** — bounded concurrency with FIFO queue
-- **Prompt via stdin** — never passes user content as CLI arguments
+OpenClaude uses a two-tier memory architecture:
 
-## Directory Structure
+| Layer | Purpose | Mechanism |
+|-------|---------|-----------|
+| **Hindsight** (primary) | Long-term semantic memory | Docker container, MCP tools: `retain`, `recall`, `reflect` |
+| **MEMORY.md** (curated) | Critical context always in view | 50-line file, enforced by PreToolUse hook |
 
-```
-~/.openclaude/
-  config.json              # Main configuration
-  HEARTBEAT.md             # Heartbeat checklist
-  gateway.pid              # Running process PID
-  memory/
-    openclaude.sqlite      # Memory index (SQLite + FTS5 + sqlite-vec)
-    *.md                   # Memory files (human-readable)
-  skills/
-    *.md                   # Skill definitions
-  sessions/
-    <id>/                  # Isolated session workspaces
-      prompt.md            # Prompt sent to Claude
-  cron/
-    jobs.json              # Persisted cron jobs
-  logs/
-    gateway.log            # stdout
-    gateway.err.log        # stderr
-```
+The agent calls `retain` during conversations to store facts immediately. A nightly cron (`nightly-memory.sh`) acts as a safety net, processing session transcripts in batch to catch missed facts and generating daily logs.
 
-## Development
+### Hooks
+
+| Hook | Trigger | Script | Purpose |
+|------|---------|--------|---------|
+| SessionEnd | Session exits | `log-session.sh` | Append session metadata to manifest for nightly processing |
+| PreToolUse | Write/Edit called | `check-memory-size.sh` | Reject MEMORY.md edits if over 50 lines |
+
+### Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `/bootstrap` | One-time onboarding: discover identity, learn about user |
+| `/standup` | Daily git summary across projects |
+| `/research` | Deep research combining web search + memory recall |
+| `/remind` | Task & reminder management via Hindsight temporal recall |
+
+### Subagents
+
+| Agent | Model | Access | Purpose |
+|-------|-------|--------|---------|
+| `cron-worker` | Haiku | Write to `memory/` only | Daily logs, cleanup, heartbeat |
+| `researcher` | Sonnet | Read-only | Web research, structured reports |
+| `coder` | Sonnet | Full | Code changes with tests + commits |
+
+## Agent Management
+
+### Export / Import
+
+Move an agent to another machine:
 
 ```bash
-pnpm install       # Install dependencies
-pnpm build         # Build with tsdown
-pnpm dev           # Watch mode
-pnpm test          # Run tests (vitest)
-pnpm lint          # Lint (oxlint)
-pnpm format        # Format (oxfmt)
+# On source machine
+./scripts/export-agent.sh nova
+# Creates nova-export-2026-03-23.tar.gz
+
+# On target machine
+./scripts/import-agent.sh nova-export-2026-03-23.tar.gz
 ```
 
-48 source files, 35 test files, 384 tests.
+**Note:** API keys and Telegram tokens are not included in exports. Re-configure them after import.
 
-## Credits
+### Health Checks
 
-Memory system, skills framework, and channel adapters extracted from [OpenClaw](https://github.com/openclaw/openclaw).
+Set up a cron job to auto-restart Hindsight if it goes down:
+
+```bash
+# Check every 5 minutes
+*/5 * * * * /path/to/openclaude/scripts/health-check.sh nova 8888
+```
+
+### Uninstall
+
+```bash
+# Remove agent config only
+./scripts/uninstall.sh nova
+
+# Remove agent + Hindsight container + data
+./scripts/uninstall.sh nova --remove-data
+```
+
+## Design Principles
+
+- **All bash, no build step.** Zero runtime dependencies beyond Claude Code CLI and Docker.
+- **One container per agent.** Hard memory isolation between agents (~200MB RAM each).
+- **Agent owns its identity.** Personality emerges through conversation, not configuration.
+- **Retain immediately, not in batches.** Facts go to Hindsight as they happen.
+- **Trash, don't delete.** Use `trash` instead of `rm` for recoverability.
+- **Ask before acting externally.** Messages, API calls, and system changes require confirmation.
+
+## Testing
+
+Tests use [bats](https://github.com/bats-core/bats-core) (Bash Automated Testing System):
+
+```bash
+# Run all tests
+bats scripts/test/
+
+# Run specific test suite
+bats scripts/test/setup.bats
+bats scripts/test/log-session.bats
+bats scripts/test/nightly-memory.bats
+bats scripts/test/check-memory-size.bats
+bats scripts/test/health-check.bats
+```
+
+## Documentation
+
+- **[Setup Guide](docs/setup.md)** — Prerequisites, detailed setup, troubleshooting
+- **[Architecture Plan](docs/plans/2026-03-23-openclaude-v2-architecture.md)** — Full technical specification
 
 ## License
 

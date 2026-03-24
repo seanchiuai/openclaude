@@ -1,34 +1,66 @@
-# OpenClaude
+# OpenClaude v2
 
-Autonomous AI assistant powered by Claude Code CLI. Forked from OpenClaw (different agent runtime). Always use "openclaude" in code/configs — only reference OpenClaw when discussing upstream origin.
+General-purpose personal AI assistant built on Claude Code native features + ClaudeClaw (daemon/Telegram) + Hindsight (semantic memory). Zero custom runtime code.
 
-## Commands
+## Architecture
 
-```bash
-pnpm install    pnpm build    pnpm dev
-pnpm test       pnpm lint     pnpm format
-```
-
-## Code Conventions
-
-- ESM only, `.js` suffix in imports, Zod for validation
-- Functions over classes, `unknown` over `any`, co-located tests (`foo.test.ts`)
-- Errors propagate; catch at boundaries only
-- **Run `pnpm test` after every change.** Do not skip tests or consider work done without a green test run.
-- **Commit after every change.** Once tests pass, immediately commit with a descriptive message. Do not batch multiple changes into one commit — each logical change gets its own commit.
-- **Copy from OpenClaw first.** Before writing new code, check if `openclaw-source/` has an existing implementation. Copy it directly and adapt — don't reinvent what already exists upstream. Only diverge where Claude Code's engine requires it.
+- **Agent directories** (`~/.openclaude/agents/<name>/`) — self-contained, each with `.claude/` config + `workspace/` identity files
+- **Hindsight** — Docker container per agent, MCP-first semantic memory (retain/recall/reflect)
+- **Telegram** — Official Anthropic plugin (interactive) or ClaudeClaw (daemon mode, cron, heartbeat)
+- **Native Claude Code** — Skills, agents, hooks, rules, sessions, CLAUDE.md `@import`
 
 ## Project Layout
 
 ```
-src/
-  config/      engine/      gateway/     channels/    router/
-  memory/      cron/        skills/      mcp/         tools/      cli/
+templates/
+  workspace/     # Agent identity templates (IDENTITY.md, SOUL.md, AGENTS.md, etc.)
+  claude/        # Claude Code config templates (CLAUDE.md bridge, .mcp.json, skills, agents, rules, claudeclaw)
 
-~/.openclaude/
-  config.json   HEARTBEAT.md   gateway.pid   sessions-map.json
-  memory/       sessions/      skills/       cron/jobs.json   logs/
+scripts/
+  setup.sh           # Create new agent from templates
+  uninstall.sh       # Remove agent
+  spawn-worker.sh      # Spawn parallel claude -p workers from agent dir
+  log-session.sh       # SessionEnd hook: append session to manifest
+  nightly-memory.sh    # Nightly cron: process transcripts + generate daily log
+  check-memory-size.sh  # PreToolUse hook: enforce MEMORY.md 50-line cap
+  health-check.sh    # System cron: verify Hindsight + ClaudeClaw alive
+  export-agent.sh    # Bundle agent + Hindsight data for migration
+  import-agent.sh    # Restore agent on new machine
+  test/              # Bats test files
+
+docs/
+  plans/             # Architecture docs and gameplans
+  setup.md           # Setup guide
 ```
+
+## Installed Agent Layout
+
+```
+~/.openclaude/agents/nova/
+  .claude/
+    CLAUDE.md          # Bridge: @imports workspace files
+    .mcp.json          # Hindsight MCP server
+    settings.json      # Permissions + hooks
+    skills/            # bootstrap, standup, research, remind
+    agents/            # cron-worker, researcher, coder
+    rules/             # safety, messaging
+  workspace/
+    IDENTITY.md        # Agent name, creature, vibe, emoji
+    SOUL.md            # Persona, tone, values
+    AGENTS.md          # Operating rules, memory policy
+    USER.md            # Human's preferences
+    TOOLS.md           # Local environment
+    HEARTBEAT.md       # Periodic checklist
+    MEMORY.md          # Curated cheat sheet (always in context)
+    memory/            # Daily logs (nightly cron from Hindsight)
+```
+
+## Conventions
+
+- **All scripts are bash.** No TypeScript, no build step, no runtime dependencies.
+- **Commit after every change.** Each logical change gets its own commit.
+- **Copy from OpenClaw patterns.** Check if OpenClaw's workspace patterns apply before inventing new ones.
+- **Test scripts with bats** (Bash Automated Testing System).
 
 ## Claude Code CLI — Critical Rules
 
@@ -43,56 +75,14 @@ echo "prompt" | claude -p --output-format json
 
 # DO NOT USE — will break:
 --input-file                    # doesn't exist
---dangerously-skip-permissions  # forces API auth, breaks Pro subscription
+
+# USE WITH CAUTION:
+--dangerously-skip-permissions  # bypasses all permission prompts (needed for daemon mode)
 ```
 
 - **Output is a JSON array** of events. Extract response: `parsed.findLast(e => e.type === "result").result`
 - **Unset env vars** before spawning: `CLAUDECODE`, `ANTHROPIC_API_KEY`, `CLAUDE_API_KEY`, `CLAUDE_CODE_ENTRYPOINT`
-- **Session isolation:** unique `--project` path per session under `~/.openclaude/sessions/<id>/`
-- **Process pool:** max 4 concurrent, FIFO queue for excess
-- **Session continuity:** `--session-id` on first message, `--resume` on subsequent. Auto-reset after 4h idle. State persisted to `sessions-map.json`.
 
-## Router Dispatch Order
+## Gameplan
 
-First match wins:
-
-1. **Gateway commands** (`/status`, `/help`, `/skills`, `/memory`, `/cron`) — direct response, no spawn
-2. **Skill triggers** (`/standup`, etc.) — skill body as prompt, spawns Claude Code
-3. **Cron jobs** (`source === "cron"`) — isolated session each time
-4. **User messages** — main session with `--resume`, memory context on first message
-
-## Skills
-
-`SKILL.md` files in `~/.openclaude/skills/` (recursive). YAML frontmatter + markdown body:
-
-```yaml
----
-name: daily-standup
-description: Generate a daily standup summary
-triggers:
-  - /standup
-  - standup
----
-Review my recent git commits and summarize.
-```
-
-Trigger matching normalizes leading `/`. Prompt sent to engine: `Use the "<name>" skill for this request.` with args appended as `\n\nUser input:\n<args>`.
-
-## MCP Gateway Tools
-
-Auto-injected MCP server gives Claude Code subprocesses access to gateway APIs:
-
-`cron_list` `cron_status` `cron_add` `cron_remove` `cron_run` · `memory_search` `memory_get` · `send_message`
-
-Standalone stdio server (`src/mcp/gateway-tools-server.ts`) proxies to HTTP API (`/api/cron/*`, `/api/memory/*`, `/api/send`).
-
-## Gotchas
-
-- **Empty `allowFrom` array blocks everyone** — omit the field to allow all users
-- **Env var substitution runs on ALL config values** — omit unused channel blocks entirely
-- **Zod validates disabled channels** — if a channel block exists, required fields must be valid
-- **Telegram 409 Conflict** — only one process can poll a bot token; kill old instances first
-
-## Design Doc
-
-`docs/plans/2026-03-12-openclaude-design.md`
+`docs/plans/2026-03-23-openclaude-v2-architecture.md`

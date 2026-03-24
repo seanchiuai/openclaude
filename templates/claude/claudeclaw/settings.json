@@ -1,0 +1,26 @@
+{
+  "model": "sonnet",
+  "timezone": "UTC+0",
+  "heartbeat": {
+    "enabled": false,
+    "interval": 30,
+    "prompt": "prompts/heartbeat.md",
+    "excludeWindows": [
+      { "days": [0, 1, 2, 3, 4, 5, 6], "start": "23:00", "end": "07:00" }
+    ],
+    "forwardToTelegram": false
+  },
+  "telegram": {
+    "token": "",
+    "allowedUserIds": []
+  },
+  "discord": {
+    "token": "",
+    "allowedUserIds": []
+  },
+  "security": {
+    "level": "moderate",
+    "allowedTools": [],
+    "disallowedTools": []
+  }
+}

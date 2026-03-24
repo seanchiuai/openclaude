@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hindsight": {
+      "type": "http",
+      "url": "http://localhost:__HINDSIGHT_PORT__/mcp/__AGENT_NAME__/"
+    }
+  }
+}
