@@ -1,27 +1,14 @@
 #!/usr/bin/env bats
 
 # Tests for scripts/setup.sh
+# setup.sh now only scaffolds directories — all interactive setup
+# (Docker, LLM provider, API keys) happens in the /bootstrap skill.
 
 setup() {
   export TEST_HOME=$(mktemp -d)
   export REAL_HOME="$HOME"
   export HOME="$TEST_HOME"
   export OPENCLAUDE_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-  # Mock docker command
-  export PATH="$TEST_HOME/bin:$PATH"
-  mkdir -p "$TEST_HOME/bin"
-  printf '#!/bin/bash\necho "mock docker $*"\n' > "$TEST_HOME/bin/docker"
-  chmod +x "$TEST_HOME/bin/docker"
-  # Skip interactive prompts in tests
-  export HINDSIGHT_LLM_PROVIDER="skip"
-  export OPENCLAUDE_TIMEZONE="UTC"
-  export OPENCLAUDE_SKIP_CRON="1"
-  # Mock crontab command
-  printf '#!/bin/bash\necho "mock crontab $*"\n' > "$TEST_HOME/bin/crontab"
-  chmod +x "$TEST_HOME/bin/crontab"
-  # Mock curl command (for Hindsight health check)
-  printf '#!/bin/bash\nexit 0\n' > "$TEST_HOME/bin/curl"
-  chmod +x "$TEST_HOME/bin/curl"
 }
 
 teardown() {
@@ -66,83 +53,28 @@ teardown() {
   grep -q "8888" "$mcp"
 }
 
-@test "setup.sh removes stale container before starting" {
-  # Mock docker that reports a stopped container, then succeeds on rm and run
-  cat > "$TEST_HOME/bin/docker" << 'SCRIPT'
-#!/bin/bash
-case "$1" in
-  ps)    echo "hindsight-preflight-agent" ;;
-  inspect) echo "exited" ;;
-  rm)    echo "removed" ;;
-  image) exit 0 ;;  # image inspect — image exists
-  pull)  echo "pulled" ;;
-  run)   echo "container-id-123" ;;
-  info)  echo "mock docker info" ;;
-  logs)  echo "mock logs" ;;
-  *)     echo "mock docker $*" ;;
-esac
-SCRIPT
-  chmod +x "$TEST_HOME/bin/docker"
-  export HINDSIGHT_LLM_PROVIDER="gemini"
-  export HINDSIGHT_LLM_API_KEY="test-key"
-  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" preflight-agent
+@test "setup.sh accepts custom port" {
+  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" myagent 9999
   [ "$status" -eq 0 ]
-  [[ "$output" == *"removing stale container"* ]]
+  local mcp="$TEST_HOME/.openclaude/agents/myagent/.claude/.mcp.json"
+  grep -q "9999" "$mcp"
+  ! grep -q "8888" "$mcp"
 }
 
-@test "setup.sh pulls image when not available locally" {
-  # Mock docker where image inspect fails (not pulled) but pull succeeds
-  cat > "$TEST_HOME/bin/docker" << 'SCRIPT'
-#!/bin/bash
-case "$1" in
-  ps)    echo "" ;;  # no existing container
-  image) exit 1 ;;   # image not found locally
-  pull)  echo "Pulling from ghcr.io/vectorize-io/hindsight" ;;
-  run)   echo "container-id-123" ;;
-  info)  echo "mock docker info" ;;
-  logs)  echo "mock logs" ;;
-  *)     echo "mock docker $*" ;;
-esac
-SCRIPT
-  chmod +x "$TEST_HOME/bin/docker"
-  export HINDSIGHT_LLM_PROVIDER="gemini"
-  export HINDSIGHT_LLM_API_KEY="test-key"
-  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" pull-agent
+@test "setup.sh copies ClaudeClaw config" {
+  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" myagent
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Pulling Hindsight image"* ]]
+  [ -d "$TEST_HOME/.openclaude/agents/myagent/.claude/claudeclaw" ]
 }
 
-@test "setup.sh detects port conflict and skips Hindsight" {
-  # Mock lsof to simulate port conflict
-  cat > "$TEST_HOME/bin/lsof" << 'SCRIPT'
-#!/bin/bash
-if [[ "$*" == *":8888"* ]]; then
-  echo "node 12345"
-  exit 0
-fi
-exit 1
-SCRIPT
-  chmod +x "$TEST_HOME/bin/lsof"
-  # Mock ps for the blocking process name
-  cat > "$TEST_HOME/bin/ps" << 'SCRIPT'
-#!/bin/bash
-echo "node"
-SCRIPT
-  chmod +x "$TEST_HOME/bin/ps"
-  # Docker: no existing container
-  cat > "$TEST_HOME/bin/docker" << 'SCRIPT'
-#!/bin/bash
-case "$1" in
-  ps)   echo "" ;;
-  info) echo "mock" ;;
-  *)    echo "mock docker $*" ;;
-esac
-SCRIPT
-  chmod +x "$TEST_HOME/bin/docker"
-  export HINDSIGHT_LLM_PROVIDER="gemini"
-  export HINDSIGHT_LLM_API_KEY="test-key"
-  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" port-agent
+@test "setup.sh copies skills including bootstrap" {
+  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" myagent
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Port 8888 is already in use"* ]]
-  [[ "$output" == *"Skipping Hindsight"* ]]
+  [ -f "$TEST_HOME/.openclaude/agents/myagent/.claude/skills/bootstrap/SKILL.md" ]
+}
+
+@test "setup.sh shows bootstrap instruction in output" {
+  run bash "$OPENCLAUDE_DIR/scripts/setup.sh" myagent
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/bootstrap"* ]]
 }

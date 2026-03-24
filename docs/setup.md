@@ -24,38 +24,30 @@
 ./scripts/setup.sh atlas 8889
 ```
 
-This creates `~/.openclaude/agents/nova/` with:
+This scaffolds `~/.openclaude/agents/nova/` with:
 - `.claude/` — Claude Code config (CLAUDE.md bridge, MCP, hooks, skills, agents, rules, ClaudeClaw)
 - `workspace/` — Identity files (IDENTITY.md, SOUL.md, AGENTS.md, etc.)
-- A running Hindsight Docker container at `localhost:8888`
-- Cron jobs auto-added (nightly memory at 2am, health check every 5min)
-- Timezone configured for ClaudeClaw cron scheduling
 
-### 2. Start a Session
+### 2. Run Bootstrap
 
 ```bash
 cd ~/.openclaude/agents/nova
 claude
+# Then run: /bootstrap
 ```
 
-Claude will load your agent's identity via the CLAUDE.md bridge file.
+Bootstrap is the full onboarding wizard. It handles **everything** inside Claude Code:
 
-### 3. Run Bootstrap
+1. **System check** — verifies Docker is installed and running
+2. **Hindsight setup** — asks for your LLM provider and API key, starts the Docker container, verifies health
+3. **Cron jobs** — registers nightly-memory and health-check cron entries
+4. **Identity discovery** — conversational setup for your agent's name, creature, vibe, emoji
+5. **Human profile** — your name, timezone, preferences (USER.md)
+6. **Soul customization** — personalize SOUL.md together
+7. **Verification** — tests Hindsight memory end-to-end, confirms everything works
 
-In your first session, run `/bootstrap` to:
-- Choose your agent's name, creature type, vibe, and emoji
-- Set up your human profile (name, timezone, preferences)
-- Customize SOUL.md together
-
-### 4. Verify Hindsight
-
-```bash
-# Check Hindsight is running:
-curl http://localhost:8888/docs
-
-# Test memory from within a Claude session:
-# Use `retain` to store a fact, then `recall` to retrieve it
-```
+If anything goes wrong during setup, bootstrap will diagnose the issue and help
+you fix it right there in the conversation.
 
 ### 5. Connect Telegram (Optional)
 
