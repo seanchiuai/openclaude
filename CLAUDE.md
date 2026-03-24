@@ -19,6 +19,7 @@ templates/
 scripts/
   setup.sh           # Create new agent from templates
   uninstall.sh       # Remove agent
+  spawn-worker.sh      # Spawn parallel claude -p workers from agent dir
   log-session.sh       # SessionEnd hook: append session to manifest
   nightly-memory.sh    # Nightly cron: process transcripts + generate daily log
   check-memory-size.sh  # PreToolUse hook: enforce MEMORY.md 50-line cap

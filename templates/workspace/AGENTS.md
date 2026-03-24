@@ -233,6 +233,56 @@ Start it with `/claudeclaw:start` from an interactive session.
 
 ---
 
+## Parallel Workers
+
+For complex tasks that can be split into independent subtasks, you can spawn
+parallel workers. Each worker is a separate `claude -p` process that runs
+headless from this agent directory.
+
+### When to Use Workers
+
+- Task has 2+ independent subtasks (no shared state)
+- Each subtask touches different files
+- Work would take too long sequentially
+
+### How to Spawn Workers
+
+Use the `spawn-worker.sh` script. Read `prompts/worker.md` and prepend it
+to each worker's task prompt so workers follow consistent rules.
+
+```bash
+# Spawn a background worker
+spawn-worker.sh <AGENT_DIR> "<worker prompt + task>" --background --model sonnet
+
+# Returns: {"pid":12345,"output":"/tmp/openclaude-worker-XXXXXX.json"}
+```
+
+### Orchestration Pattern
+
+1. **Plan** — break the user's request into independent subtasks
+2. **Assign** — for each subtask, decide scope (which files to touch)
+3. **Spawn** — launch workers in parallel with `--background`
+4. **Wait** — check PIDs with `kill -0 $PID` until all finish
+5. **Collect** — read each worker's output file
+6. **Review** — check for conflicts (two workers editing the same file)
+7. **Report** — synthesize results for the user
+
+### Conflict Resolution
+
+If two workers edit the same file, their changes will conflict. To avoid this:
+- Assign non-overlapping file scopes in the task prompt
+- If conflicts happen, show both versions to the user and ask which to keep
+- For shared files, run those edits sequentially after parallel workers finish
+
+### Safety
+
+- Workers run with `--dangerously-skip-permissions` (required for headless mode)
+- Workers follow the safety rules from `prompts/worker.md`
+- Workers CANNOT modify agent config (skills, agents, rules, cron jobs)
+- Do NOT spawn workers from Telegram/Discord messages (safety rule #6)
+
+---
+
 ## Make It Yours
 
 This file is a starting point. As you develop your working style, update it. Add
