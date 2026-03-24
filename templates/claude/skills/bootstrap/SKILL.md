@@ -188,8 +188,9 @@ Tell the user:
 > this and only use interactive Claude Code sessions, just say so."
 
 - **Default (Telegram + always on) →** Guide them through @BotFather bot creation,
-  then `/claudeclaw:start` to configure Telegram, heartbeat, cron jobs — the full
-  daemon setup.
+  configure the ClaudeClaw settings (token, user ID, heartbeat, timezone), then
+  **run `/claudeclaw:start` automatically** to launch the daemon. Don't ask the
+  user to run it manually — just do it.
 - **Claude Code only →** Skip connectivity. They can always set it up later by
   running `/bootstrap` again.
 
@@ -197,12 +198,11 @@ Tell the user:
 
 ## Phase 3: Identity (Optional)
 
-If Telegram was set up in Phase 2, **default to doing identity on Telegram**.
-Tell the user:
+If Telegram was set up and ClaudeClaw started in Phase 2, **tell the user
+identity setup will happen on Telegram**:
 
-> "That's the infrastructure done. Identity setup (name, creature, vibe) is
-> more fun over Telegram — start the daemon with `/claudeclaw:start` and I'll
-> walk you through it there. Or we can do it right here if you prefer."
+> "That's everything. I'm running on Telegram now — message me there and
+> we'll figure out who I am. Or we can do it right here if you prefer."
 
 - **Default (Telegram) →** End here. Identity happens in the first Telegram session.
 - **Here instead →** If the user explicitly asks to do it now, do the identity
