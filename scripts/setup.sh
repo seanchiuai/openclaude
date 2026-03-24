@@ -111,6 +111,23 @@ else
   esac
 fi
 
+# Check Docker is available
+if [[ "$LLM_PROVIDER" != "skip" ]]; then
+  if ! command -v docker &>/dev/null; then
+    echo ""
+    echo "Error: Docker is not installed."
+    echo "Install it from https://docs.docker.com/get-docker/"
+    echo "Continuing without Hindsight — memory features won't be available."
+    LLM_PROVIDER="skip"
+  elif ! docker info &>/dev/null 2>&1; then
+    echo ""
+    echo "Error: Docker daemon is not running."
+    echo "Start Docker Desktop or run 'sudo systemctl start docker', then re-run setup."
+    echo "Continuing without Hindsight — memory features won't be available."
+    LLM_PROVIDER="skip"
+  fi
+fi
+
 # Start Hindsight Docker container
 if [[ "$LLM_PROVIDER" == "skip" ]]; then
   echo ""
